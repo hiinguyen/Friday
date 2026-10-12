@@ -58,6 +58,12 @@ def emit(event: dict) -> None:
     sys.stdout.flush()
 
 
+def log(message: str) -> None:
+    """Diagnostics for the journal; stderr is forwarded by the Electron supervisor."""
+    sys.stderr.write(message + "\n")
+    sys.stderr.flush()
+
+
 def rms_level(chunk: bytes) -> float:
     """Loudness of an s16 chunk mapped to 0..1 on a perceptual (dB) scale."""
     samples = array.array("h", chunk[: len(chunk) - len(chunk) % 2])
@@ -160,11 +166,60 @@ class WakeDetector:
         return conf
 
 
-def mic_command(target: str | None) -> list[str]:
-    cmd = ["pw-record", "--rate", str(SAMPLE_RATE), "--channels", "1", "--format", "s16"]
-    if target:
-        cmd += ["--target", target]
-    return cmd + ["-"]
+# Never pick a Bluetooth mic implicitly: while any app records from it, the
+# headset is forced from A2DP (stereo, high quality) into the HFP call profile
+# (mono, 16 kHz), which ruins music for as long as this listener runs.
+EXCLUDED_APIS = {"bluez5"}
+# If the chosen mic disappears, end the stream instead of letting WirePlumber
+# silently move it to the default source (which may be a Bluetooth headset);
+# run_mic then re-resolves the source.
+STREAM_PROPS = "{ node.dont-fallback = true node.dont-reconnect = true }"
+
+
+def pick_source(sources: list[dict], default: str | None) -> str | None:
+    """Choose a capture source: the default if eligible, else the highest priority one."""
+    eligible = [
+        s
+        for s in sources
+        if s.get("properties", {}).get("media.class") == "Audio/Source"
+        and s.get("properties", {}).get("device.api") not in EXCLUDED_APIS
+    ]
+    for s in eligible:
+        if s["name"] == default:
+            return default
+    if not eligible:
+        return None
+    best = max(eligible, key=lambda s: int(s["properties"].get("priority.session", 0)))
+    return best["name"]
+
+
+def resolve_target(explicit: str | None) -> str | None:
+    """FRIDAY_MIC wins; otherwise ask PipeWire for a suitable non-Bluetooth mic."""
+    if explicit:
+        return explicit
+    try:
+        listing = subprocess.run(
+            ["pactl", "--format=json", "list", "sources"], capture_output=True, text=True, check=True, timeout=5
+        )
+        default = subprocess.run(
+            ["pactl", "get-default-source"], capture_output=True, text=True, check=True, timeout=5
+        ).stdout.strip()
+        return pick_source(json.loads(listing.stdout), default or None)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        emit({"type": "error", "message": f"cannot list audio sources: {exc}"})
+        return None
+
+
+def mic_command(target: str) -> list[str]:
+    return [
+        "pw-record",
+        "--rate", str(SAMPLE_RATE),
+        "--channels", "1",
+        "--format", "s16",
+        "--target", target,
+        "-P", STREAM_PROPS,
+        "-",
+    ]  # fmt: skip
 
 
 def read_chunks(stream: BinaryIO) -> Iterator[bytes]:
@@ -199,31 +254,38 @@ def run_wav(detector: WakeDetector, path: Path) -> None:
         emit({"type": "wake", "conf": round(conf, 3), "at": round(len(frames) / bytes_per_s, 2)})
 
 
-def run_mic(detector: WakeDetector, target: str | None) -> None:
-    """Capture forever, restarting pw-record if the device goes away."""
+def run_mic(detector: WakeDetector, explicit_target: str | None) -> None:
+    """Capture forever, re-resolving the mic and restarting pw-record if it goes away."""
     attempt = 0
     recovering = False
     while True:
-        proc = subprocess.Popen(mic_command(target), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        target = resolve_target(explicit_target)
         started = time.monotonic()
-        assert proc.stdout is not None
-        detector.reset()
-        try:
-            chunks = read_chunks(proc.stdout)
-            first = next(chunks, None)
-            if first is not None:
-                if recovering:
-                    emit({"type": "ready"})
-                    recovering = False
-                process(detector, itertools.chain([first], chunks))
-        finally:
-            proc.kill()
-            proc.wait()
-        stderr = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
+        if target is None:
+            reason = "no non-Bluetooth microphone found (set FRIDAY_MIC to use a specific one)"
+        else:
+            if attempt == 0 or recovering:
+                log(f"capturing from {target}")
+            proc = subprocess.Popen(mic_command(target), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            assert proc.stdout is not None
+            detector.reset()
+            try:
+                chunks = read_chunks(proc.stdout)
+                first = next(chunks, None)
+                if first is not None:
+                    if recovering:
+                        emit({"type": "ready"})
+                        recovering = False
+                    process(detector, itertools.chain([first], chunks))
+            finally:
+                proc.kill()
+                proc.wait()
+            stderr = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
+            reason = f"microphone stream ended ({stderr or 'no output'})"
         if time.monotonic() - started > 30:
             attempt = 0
         delay = RESTART_BACKOFF_S[min(attempt, len(RESTART_BACKOFF_S) - 1)]
-        emit({"type": "error", "message": f"microphone stream ended ({stderr or 'no output'}); retrying in {delay}s"})
+        emit({"type": "error", "message": f"{reason}; retrying in {delay}s"})
         recovering = True
         attempt += 1
         time.sleep(delay)

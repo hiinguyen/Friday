@@ -83,6 +83,40 @@ class TestResultParsing:
         assert wake.partial_has_committed_wake(json.dumps({"partial": partial})) is expected
 
 
+def source(name: str, api: str, media_class: str = "Audio/Source", priority: int = 2000) -> dict:
+    return {
+        "name": name,
+        "properties": {"device.api": api, "media.class": media_class, "priority.session": str(priority)},
+    }
+
+
+LAPTOP_MIC = source("alsa_input.pci-0000_05_00.6.analog-stereo", "alsa", priority=2009)
+BT_MIC = source("bluez_input.E8:9E:13:C5:0A:B7", "bluez5", priority=2010)
+USB_MIC = source("alsa_input.usb-Blue_Yeti-00.analog-stereo", "alsa", priority=2100)
+SPEAKER_MONITOR = source("alsa_output.pci-0000_05_00.6.analog-stereo.monitor", "alsa", "Audio/Sink", 1009)
+
+
+class TestPickSource:
+    """Recording from a Bluetooth mic forces the headset into the low-quality
+    HFP call profile for as long as the stream is open, so the always-on
+    listener must never pick one implicitly."""
+
+    def test_skips_bluetooth_default_and_uses_builtin_mic(self) -> None:
+        assert wake.pick_source([SPEAKER_MONITOR, LAPTOP_MIC, BT_MIC], BT_MIC["name"]) == LAPTOP_MIC["name"]
+
+    def test_uses_default_when_it_is_not_bluetooth(self) -> None:
+        assert wake.pick_source([LAPTOP_MIC, USB_MIC, BT_MIC], LAPTOP_MIC["name"]) == LAPTOP_MIC["name"]
+
+    def test_prefers_highest_priority_when_default_is_ineligible(self) -> None:
+        assert wake.pick_source([LAPTOP_MIC, USB_MIC, BT_MIC], BT_MIC["name"]) == USB_MIC["name"]
+
+    def test_never_records_monitors(self) -> None:
+        assert wake.pick_source([SPEAKER_MONITOR], SPEAKER_MONITOR["name"]) is None
+
+    def test_none_when_only_bluetooth_mics_exist(self) -> None:
+        assert wake.pick_source([BT_MIC], BT_MIC["name"]) is None
+
+
 def synthesize(text: str, out: Path, voice: str) -> Path:
     raw = out.with_suffix(".raw.wav")
     subprocess.run([ESPEAK, "-v", voice, "-s", "155", "-w", str(raw), text], check=True)

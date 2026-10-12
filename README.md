@@ -12,6 +12,9 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
 - `listener/wake.py` decodes 16 kHz audio with a grammar-restricted Vosk model.
   Decoy words ("fried", "freddy", "fridge", ...) keep near-sounding speech from triggering.
   It fires at the end of an utterance, or earlier once a "friday" hypothesis is committed mid-sentence.
+- The listener never records from a Bluetooth mic unless `FRIDAY_MIC` names one.
+  An open Bluetooth mic forces the headset into the mono 16 kHz HFP call profile, which ruins playback.
+  It also refuses to be moved to another source if its mic disappears; it re-selects one instead.
 - `app/src/main.js` keeps a hidden transparent window warm, so the HUD appears instantly.
   It supervises the listener and restarts it with backoff.
 - `app/renderer` draws the HUD.
@@ -43,7 +46,7 @@ Environment (set with `systemctl --user set-environment`):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `FRIDAY_MIC` | system default source | PipeWire source name for `pw-record --target` |
+| `FRIDAY_MIC` | default source, or the best non-Bluetooth mic | PipeWire source name for `pw-record --target` |
 | `FRIDAY_MIN_CONF` | `0.6` | Minimum Vosk word confidence |
 | `FRIDAY_MODEL` | `models/vosk-model-small-en-us-0.15` | Vosk model directory |
 | `FRIDAY_DEBUG` | unset | `1` logs steady-state fps after each wake |
