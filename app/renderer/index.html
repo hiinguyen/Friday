@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:"
+    />
+    <title>F.R.I.D.A.Y.</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="hud/app.js"></script>
+  </head>
+  <body data-state="off">
+    <!-- Full-screen layers are static CSS animated only via opacity/transform,
+         so the compositor handles them without re-rasterising. Per-frame
+         canvas work is confined to the reactor stage. -->
+    <div class="backdrop" aria-hidden="true"></div>
+    <div id="leaders" aria-hidden="true">
+      <i class="leader left"></i><i class="leader right"></i>
+    </div>
+    <div id="shocks" aria-hidden="true"></div>
+    <div id="stage" aria-hidden="true">
+      <canvas id="bloom"></canvas>
+      <canvas id="fx"></canvas>
+    </div>
+
+    <div class="frame" aria-hidden="true">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    </div>
+
+    <header class="title">
+      <h1 id="title">F.R.I.D.A.Y.</h1>
+      <p class="subtitle">Female Replacement Intelligent Digital Assistant Youth</p>
+    </header>
+
+    <section class="center-copy">
+      <p id="greeting" class="greeting"></p>
+      <p class="status"><span class="status-dot"></span><span id="status">Listening</span></p>
+    </section>
+
+    <aside class="panel left">
+      <h2>System Diagnostics</h2>
+      <div class="metric" data-key="cpu">
+        <div class="metric-head"><span>CPU</span><b id="cpu-val">0%</b></div>
+        <div class="bar"><i id="cpu-bar"></i></div>
+      </div>
+      <div class="metric" data-key="mem">
+        <div class="metric-head"><span>Memory</span><b id="mem-val">0%</b></div>
+        <div class="bar"><i id="mem-bar"></i></div>
+      </div>
+      <div class="metric" data-key="bat">
+        <div class="metric-head"><span id="bat-label">Power cell</span><b id="bat-val">--</b></div>
+        <div class="bar"><i id="bat-bar"></i></div>
+      </div>
+      <dl class="readouts">
+        <div><dt>Net &darr;</dt><dd id="net-down">0 B/s</dd></div>
+        <div><dt>Net &uarr;</dt><dd id="net-up">0 B/s</dd></div>
+        <div><dt>Load</dt><dd id="load">0.00</dd></div>
+        <div><dt>Uptime</dt><dd id="uptime">--</dd></div>
+      </dl>
+      <canvas id="spark" class="spark"></canvas>
+      <p class="caption">CPU telemetry / 60s</p>
+    </aside>
+
+    <aside class="panel right">
+      <h2>Neural Link</h2>
+      <ol id="log" class="log"></ol>
+    </aside>
+
+    <footer class="footer">
+      <div class="clock">
+        <span id="clock">00:00:00</span>
+        <small id="date"></small>
+      </div>
+      <div class="identity">
+        <span id="identity">--</span>
+        <small>Secure channel // encrypted</small>
+      </div>
+    </footer>
+
+    <p class="hint">Esc to dismiss</p>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+[Unit]
+Description=F.R.I.D.A.Y. voice-activated HUD
+Documentation=file://%h/Documents/friday/README.md
+# Not enabled at login on purpose: Hyprland starts it (hypr/friday.conf,
+# exec-once) right after exporting WAYLAND_DISPLAY to the user manager, so
+# Electron never races the compositor.
+After=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=%h/Documents/friday/bin/friday
+Restart=always
+RestartSec=3
+# Only the Electron main process gets SIGTERM; it shuts its own Chromium
+# children down. The default (signal the whole cgroup) kills the GPU process
+# underneath the browser process, which then aborts with SIGTRAP.
+KillMode=mixed
+# Electron renames its process, which detaches stdout lines from the unit;
+# a fixed identifier keeps `journalctl --user -t friday` reliable.
+SyslogIdentifier=friday
+# Silence the dev-only CSP warning banner in the journal.
+Environment=ELECTRON_DISABLE_SECURITY_WARNINGS=1
+Nice=5

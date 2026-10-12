@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# F.R.I.D.A.Y. launcher.
+#   friday            start the background service process (normally run by systemd)
+#   friday wake       show the HUD on a running instance
+#   friday hide       dismiss the HUD
+#   friday toggle     toggle the HUD
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+exec "$ROOT/app/node_modules/electron/dist/electron" "$ROOT/app" --ozone-platform=wayland "$@"
