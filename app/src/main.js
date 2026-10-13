@@ -8,6 +8,7 @@
 
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { HermesAgent } = require('./agent');
 const { WakeListener } = require('./listener');
 const { createSampler } = require('./stats');
 
@@ -45,6 +46,7 @@ let listenerStatus = { listener: 'starting', message: 'Starting wake-word engine
 const VOICEPRINT_LOG = { armed: 'enrolled voice only', unusable: 'voiceprint unusable, rejecting every command', off: 'any voice' };
 const sampleStats = createSampler();
 const listener = new WakeListener();
+const agent = new HermesAgent();
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -172,6 +174,7 @@ app.whenReady().then(() => {
   });
   listener.on('wake', (conf) => {
     log(`wake word detected (conf=${conf})`);
+    agent.cancel(); // a new command abandons whatever the last one was still doing
     showHud(conf);
   });
   listener.on('level', (value) => {
@@ -191,11 +194,39 @@ app.whenReady().then(() => {
     if (event.final) log(`command #${event.id}: ${DEBUG ? JSON.stringify(event.text) : `${event.text.length} chars`}`);
     if (event.error) console.error(`[friday] transcription #${event.id} failed: ${event.error}`);
     send('hud:transcript', event);
+    // The wake word alone or an empty transcript is not a command: nothing to run.
+    if (event.final && event.text) agent.ask(event.id, event.text);
   });
   listener.on('error', (message) => {
     console.error(`[friday] ${message}`);
     setListenerStatus({ listener: 'error', message });
   });
+
+  agent.on('start', (a) => {
+    log(`agent #${a.id}: working`);
+    send('hud:agent', { id: a.id, state: 'working' });
+  });
+  agent.on('tool', (a) => {
+    log(`agent #${a.id}: ${a.label}`);
+    send('hud:agent', { id: a.id, state: 'working', tool: a.label });
+  });
+  agent.on('delta', (a) => send('hud:reply', { id: a.id, delta: a.text }));
+  agent.on('done', (a) => {
+    log(`agent #${a.id}: replied ${a.text.length} chars`);
+    send('hud:reply', { id: a.id, text: a.text, final: true });
+    send('hud:agent', { id: a.id, state: 'done' });
+  });
+  agent.on('error', (a) => {
+    console.error(`[friday] agent #${a.id} failed: ${a.message}`);
+    send('hud:agent', { id: a.id, state: 'error', error: a.message });
+  });
+
+  if (agent.enabled) {
+    const session = agent.session ? `, session ${agent.session}` : '';
+    log(`agent bridge: ${agent.baseUrl} (model ${agent.model}${session})`);
+  } else {
+    log('agent bridge: disabled (set FRIDAY_AGENT_URL and FRIDAY_AGENT_KEY)');
+  }
 
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
@@ -203,7 +234,10 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', (event) => event.preventDefault());
-app.on('before-quit', () => listener.stop());
+app.on('before-quit', () => {
+  listener.stop();
+  agent.close();
+});
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => app.quit());
 }

@@ -141,6 +141,7 @@ function boot(conf) {
   voice.lastSpeechAt = 0;
   command.reset();
   renderCommand();
+  renderReply();
   layout();
   reactor.reset();
   particles.reset(view.R);
@@ -191,6 +192,7 @@ function finishExit() {
   // Dismissed mid-command (Esc): its remaining events are dropped while the HUD
   // is off, so forget it; ids keep any late ones stale.
   command.reset();
+  renderReply();
   stopLoop();
   panels.stop();
   hud.cancelTyping();
@@ -215,6 +217,7 @@ function finishExit() {
 function statusText() {
   if (listenerStatus.listener === 'error') return 'Microphone offline';
   if (hud.state === 'exit') return 'Standing by';
+  if (command.agent === 'working') return command.tool ? `Running ${command.tool}` : 'Working';
   switch (command.phase) {
     case 'listening':
       return voice.speaking ? 'Voice input detected' : 'Listening';
@@ -243,6 +246,29 @@ function renderCommand() {
 }
 
 const clip = (text) => (text.length > LOG_ERROR_CHARS ? `${text.slice(0, LOG_ERROR_CHARS)}...` : text);
+
+function renderReply() {
+  const el = $('reply');
+  if (el.textContent !== command.reply) el.textContent = command.reply;
+  el.classList.toggle('typing', command.agent === 'working' && !command.reply);
+}
+
+function onAgent(event) {
+  if (hud.state === 'off' || !command.onAgent(event, performance.now())) return;
+  if (event.tool) panels.log(`Hermes: ${clip(event.tool)}`, 'info');
+  if (event.state === 'error') panels.log(`Hermes: ${clip(event.error || 'failed')}`, 'err');
+  // Progress keeps the HUD awake for as long as the agent works.
+  hud.wakeAt = performance.now();
+  renderReply();
+}
+
+function onReply(event) {
+  if (hud.state === 'off' || !command.onReply(event, performance.now())) return;
+  if (event.error) panels.log(`Hermes: ${clip(event.error)}`, 'err');
+  if (event.final) reactor.ping(0.5);
+  hud.wakeAt = performance.now();
+  renderReply();
+}
 
 function onCapture(event) {
   if (hud.state === 'off' || !command.onCapture(event, performance.now())) return;
@@ -368,6 +394,8 @@ bridge.on('hud:stats', (stats) => {
 bridge.on('hud:status', onStatus);
 bridge.on('hud:capture', onCapture);
 bridge.on('hud:transcript', onTranscript);
+bridge.on('hud:agent', onAgent);
+bridge.on('hud:reply', onReply);
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') dismiss();

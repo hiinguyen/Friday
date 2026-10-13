@@ -160,3 +160,41 @@ test('progress events restart the watchdog', () => {
   t.onTranscript({ id: 1, delta: 'open' }, 50000);
   assert.equal(t.expire(100000), false);
 });
+
+test('an agent run is busy, streams its reply, and uses the longer watchdog', () => {
+  const t = new CommandTracker();
+  t.onCapture({ id: 1, state: 'listening' }, 0);
+  t.onTranscript({ id: 1, text: 'list the files.', final: true }, 1000);
+  assert.ok(!t.busy, 'the transcript alone is not busy');
+  t.onAgent({ id: 1, state: 'working', tool: 'terminal' }, 2000);
+  assert.equal(t.agent, 'working');
+  assert.equal(t.tool, 'terminal');
+  assert.ok(t.busy, 'the HUD must stay up while Hermes works');
+  assert.equal(t.expire(2000 + 61000), false, 'beyond the speech watchdog but within the agent one');
+  t.onReply({ id: 1, delta: 'Here are' }, 30000);
+  t.onReply({ id: 1, delta: ' the files.' }, 31000);
+  t.onReply({ id: 1, text: 'Here are the files.', final: true }, 32000);
+  assert.equal(t.reply, 'Here are the files.');
+  assert.equal(t.agent, 'done');
+  assert.equal(t.tool, '');
+  assert.ok(!t.busy);
+});
+
+test('an agent error ends the run with the reason', () => {
+  const t = new CommandTracker();
+  t.onCapture({ id: 1, state: 'listening' }, 0);
+  t.onTranscript({ id: 1, text: 'hello', final: true }, 1000);
+  t.onAgent({ id: 1, state: 'working' }, 2000);
+  t.onAgent({ id: 1, state: 'error', error: 'Hermes 401: invalid token' }, 3000);
+  assert.equal(t.agent, 'error');
+  assert.equal(t.error, 'Hermes 401: invalid token');
+  assert.ok(!t.busy);
+});
+
+test('agent events of an older capture are ignored', () => {
+  const t = new CommandTracker();
+  t.onCapture({ id: 5, state: 'listening' });
+  assert.equal(t.onAgent({ id: 4, state: 'working' }), false);
+  assert.equal(t.onReply({ id: 4, delta: 'stale' }), false);
+  assert.equal(t.reply, '');
+});

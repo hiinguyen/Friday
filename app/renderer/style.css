@@ -331,7 +331,38 @@ body[data-state='exit'] :is(.title, .center-copy, .panel, .footer, .frame, .hint
   display: none;
 }
 
+/* The remote agent's reply, streamed in as Hermes answers. */
+.reply {
+  max-width: min(70vw, 1040px);
+  margin: 12px auto 0;
+  font-family: var(--font-speech);
+  font-size: clamp(15px, 1.15vw, 20px);
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-shadow: var(--glow);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+.reply:empty {
+  display: none;
+}
+
 :is(.greeting, .command).typing::after {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 4px;
+  vertical-align: -0.12em;
+  background: var(--cyan);
+  animation: caret 0.8s steps(1) infinite;
+}
+
+.reply.typing::after {
   content: '';
   display: inline-block;
   width: 0.55em;

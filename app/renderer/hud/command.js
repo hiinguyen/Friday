@@ -8,6 +8,9 @@
 // Longest a command may stay busy without progress: 15 s capture plus two
 // API attempts. Guards against a lost terminal event pinning the HUD open.
 export const COMMAND_WATCHDOG_MS = 60000;
+// An agent run is longer: the remote Hermes may think and call tools for a
+// while, and the bridge only streams a line when something changes.
+export const AGENT_WATCHDOG_MS = 150000;
 export const IDLE_DISMISS_MS = 12000;
 export const REJECTED_DISMISS_MS = 3500; // someone else said "Friday": power down soon
 
@@ -39,12 +42,16 @@ export class CommandTracker {
     this.raw = '';
     this.text = '';
     this.error = '';
+    // The agent (remote Hermes) side: idle -> working -> done | error.
+    this.agent = 'idle';
+    this.tool = '';
+    this.reply = '';
     this.updatedAt = 0;
   }
 
-  /** True while the HUD must stay up: a command is being recorded or transcribed. */
+  /** True while the HUD must stay up: recording, transcribing, or waiting on the agent. */
   get busy() {
-    return this.phase === 'listening' || this.phase === 'transcribing';
+    return this.phase === 'listening' || this.phase === 'transcribing' || this.agent === 'working';
   }
 
   /** Returns false (and changes nothing) for events of an older capture. */
@@ -90,11 +97,48 @@ export class CommandTracker {
     return true;
   }
 
-  /** Fail a command that made no progress for COMMAND_WATCHDOG_MS; true if it just expired. */
+  /** Fail a command that made no progress for its watchdog; true if it just expired. */
   expire(now) {
-    if (!this.busy || now - this.updatedAt <= COMMAND_WATCHDOG_MS) return false;
+    if (!this.busy) return false;
+    const window = this.agent === 'working' ? AGENT_WATCHDOG_MS : COMMAND_WATCHDOG_MS;
+    if (now - this.updatedAt <= window) return false;
     this.phase = 'error';
-    this.error = 'speech link timed out';
+    this.agent = 'idle';
+    this.error = this.reply ? 'agent link timed out' : 'speech link timed out';
+    return true;
+  }
+
+  /**
+   * The remote agent's lifecycle: 'working' (thinking or calling a tool),
+   * 'done' or 'error'. Counts as progress so the watchdog resets.
+   */
+  onAgent({ id, state, tool, error }, now = 0) {
+    if (!this.accept(id)) return false;
+    this.updatedAt = now;
+    if (state === 'error') {
+      this.agent = 'error';
+      this.error = error ?? '';
+    } else if (state) {
+      this.agent = state;
+      if (state === 'working' && tool) this.tool = tool;
+    }
+    return true;
+  }
+
+  /** The agent's reply, streamed as deltas then confirmed with the final text. */
+  onReply({ id, delta, text, final, error }, now = 0) {
+    if (!this.accept(id)) return false;
+    this.updatedAt = now;
+    if (error) {
+      this.agent = 'error';
+      this.error = error;
+    } else if (final) {
+      this.reply = text ?? this.reply;
+      this.agent = 'done';
+      this.tool = '';
+    } else if (delta) {
+      this.reply += delta;
+    }
     return true;
   }
 }
