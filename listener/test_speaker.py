@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import speaker
+from test_vad import needs_vad
 
 FFMPEG = shutil.which("ffmpeg")
 SPEAKERS = Path(__file__).resolve().parent / "testdata" / "speakers"
@@ -249,6 +250,7 @@ def run_enroll(out: Path, wavs: list[Path]) -> subprocess.CompletedProcess:
     )
 
 
+@needs_vad
 @needs_model
 def test_enroll_refuses_samples_that_are_not_one_voice(tmp_path: Path) -> None:
     """A second person in the samples would widen the voiceprint and let them in."""
@@ -261,6 +263,7 @@ def test_enroll_refuses_samples_that_are_not_one_voice(tmp_path: Path) -> None:
     assert out.read_text() == "previous"
 
 
+@needs_vad
 @needs_model
 def test_enroll_cli_builds_a_voiceprint_from_files(tmp_path: Path) -> None:
     out = tmp_path / "voiceprint.json"

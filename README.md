@@ -10,7 +10,8 @@ Once you enroll your voice, commands from anyone else are ignored.
 ```
 mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (Electron main) --IPC--> app/renderer (HUD)
                           |
-                          +-> listener/command.py (WebRTC VAD, voice check, OpenAI speech-to-text)
+                          +-> listener/command.py (voice check, OpenAI speech-to-text)
+                                    +-> listener/vad.py (Silero VAD, offline)
                                     +-> listener/speaker.py (WeSpeaker voiceprint, offline)
 ```
 
@@ -22,7 +23,9 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
   It also refuses to be moved to another source if its mic disappears; it re-selects one instead.
 - After the wake word, `listener/command.py` records the command from the same stream.
   The recording starts exactly where "Friday" ended (Vosk word timings), so the wake word is never sent.
-  WebRTC VAD ends it after 1 s of silence, or gives up if nothing is said within 5 s; commands are capped at 15 s.
+  Silero VAD (`listener/vad.py`) ends it after 1 s without speech, or gives up if nothing is said within 5 s; commands are capped at 15 s.
+  It is a neural speech detector, so a fan, keyboard typing or other steady noise neither starts a command nor keeps one going.
+  WebRTC VAD, used before, took both for speech and recorded every command for the full 15 s.
   The audio is then streamed to OpenAI (`gpt-transcribe`) and the text appears on the HUD as it arrives.
   Nothing leaves the machine before the wake word.
   The API client connects over IPv4 first and falls back to IPv6, so a network with a dead IPv6 route (common with phone tethering) does not stall commands.
@@ -41,6 +44,7 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
 ```sh
 python -m venv .venv && .venv/bin/pip install -r listener/requirements.txt
 mkdir -p models && curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o /tmp/m.zip && unzip /tmp/m.zip -d models
+curl -L -o models/silero_vad.onnx https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx
 curl -L -o models/wespeaker_en_voxceleb_resnet34_LM.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
 (cd app && npm install)
 ln -sf "$PWD/systemd/friday.service" ~/.config/systemd/user/friday.service && systemctl --user daemon-reload
@@ -75,6 +79,7 @@ Environment (set with `systemctl --user set-environment`):
 | `OPENAI_API_KEY` | from `.env` | Without it the HUD reports that commands cannot be transcribed |
 | `FRIDAY_STT_MODEL` | `gpt-transcribe` | OpenAI transcription model |
 | `FRIDAY_STT_LANGUAGE` | `vi` | Language hint (ISO 639-1), or `auto`; English commands still transcribe correctly with `vi` |
+| `FRIDAY_VAD_MODEL` | `models/silero_vad.onnx` | Silero VAD ONNX model that decides when a command starts and ends |
 | `FRIDAY_VOICEPRINT` | `~/.local/share/friday/voiceprint.json` | Enrolled voiceprint; without the file any voice may command |
 | `FRIDAY_SPEAKER_THRESHOLD` | `0.45` | Minimum voice match (cosine similarity, 0..1) |
 | `FRIDAY_SPEAKER_MODEL` | `models/wespeaker_en_voxceleb_resnet34_LM.onnx` | WeSpeaker ONNX speaker model |

@@ -10,14 +10,21 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import command
 from speaker import Verdict, VoiceprintError
+from test_vad import TESTDATA, load_clip, needs_vad
 
 ESPEAK = shutil.which("espeak-ng")
 FFMPEG = shutil.which("ffmpeg")
+SPEAKERS = TESTDATA / "speakers"
+NOISE = TESTDATA / "noise"
 needs_tts = pytest.mark.skipif(not (ESPEAK and FFMPEG), reason="espeak-ng and ffmpeg required")
+needs_noise = pytest.mark.skipif(not FFMPEG, reason="ffmpeg required")
+# The VAD keeps calling it speech for a few frames after the last word.
+VAD_TRAIL_BYTES = int(0.4 * command.SAMPLE_RATE) * 2
 live_api = pytest.mark.skipif(
     os.environ.get("FRIDAY_LIVE_API") != "1", reason="set FRIDAY_LIVE_API=1 to call the real OpenAI API"
 )
@@ -37,7 +44,14 @@ def speech(text: str, tmp_path: Path) -> bytes:
         check=True,
     )
     with wave.open(str(out), "rb") as wav:
-        return wav.readframes(wav.getnframes())
+        return trimmed(wav.readframes(wav.getnframes()))
+
+
+def trimmed(pcm: bytes, floor: int = 200) -> bytes:
+    """Without the silence espeak pads around speech (about 0.37 s at the end): the clip is what is said."""
+    samples = np.frombuffer(pcm, dtype=np.int16)
+    loud = np.flatnonzero(np.abs(samples) > floor)
+    return samples[loud[0] : loud[-1] + 1].tobytes() if len(loud) else b""
 
 
 def run(endpointer: command.Endpointer, audio: bytes) -> str | None:
@@ -70,6 +84,7 @@ class TestStripWakePhrase:
         assert command.strip_wake_phrase(text) == expected
 
 
+@needs_vad
 class TestEndpointer:
     def test_no_speech_times_out(self) -> None:
         ep = command.Endpointer()
@@ -113,7 +128,7 @@ class TestEndpointer:
         said = speech("open the browser and play some music", tmp_path)
         ep = command.Endpointer(preroll=silence(0.5))
         run(ep, silence(1.0) + said + silence(3))
-        assert 0.6 * len(said) < len(ep.speech) <= len(said)
+        assert 0.6 * len(said) < len(ep.speech) <= len(said) + VAD_TRAIL_BYTES
         assert len(ep.speech) % command.FRAME_BYTES == 0
 
     @needs_tts
@@ -129,6 +144,60 @@ class TestEndpointer:
         assert run(command.Endpointer(), said) == "maxlength"
 
 
+@needs_vad
+@needs_noise
+class TestEndpointerInNoise:
+    """Regression: a fan or keyboard typing after the wake word was recorded as a 15 s command."""
+
+    @pytest.mark.parametrize("clip", ["fan.flac", "typing.flac"])
+    def test_noise_alone_is_not_a_command(self, clip: str) -> None:
+        ep = command.Endpointer()
+        assert run(ep, looped(noise(clip), command.NO_SPEECH_TIMEOUT_S + 1)) == "nospeech"
+        assert not ep.heard_speech
+        assert ep.speech == b""
+
+    @pytest.mark.parametrize("clip", ["fan.flac", "typing.flac"])
+    def test_command_ends_although_the_noise_goes_on(self, clip: str) -> None:
+        said = load_clip(SPEAKERS / "a-test-1.flac")
+        background = looped(noise(clip), 0.5 + seconds(said) + command.MAX_CAPTURE_S)
+        ep = command.Endpointer()
+        assert run(ep, mix(background, said, at_s=0.5)) == "silence"
+        captured_s = seconds(ep.audio)
+        spoken_s = 0.5 + seconds(said)
+        assert spoken_s < captured_s < spoken_s + command.END_SILENCE_S + 0.6
+
+    @pytest.mark.parametrize("clip", ["fan.flac", "typing.flac"])
+    def test_speaker_check_hears_the_voice_not_the_noise(self, clip: str) -> None:
+        said = load_clip(SPEAKERS / "a-test-1.flac")
+        ep = command.Endpointer(preroll=looped(noise(clip), 1.0))
+        run(ep, mix(looped(noise(clip), seconds(said) + 3), said, at_s=0))
+        # 4 s of noise would be 125 frames.
+        assert 0.6 * len(said) < len(ep.speech) <= len(said) + VAD_TRAIL_BYTES
+
+
+def seconds(pcm: bytes) -> float:
+    return len(pcm) / (2 * command.SAMPLE_RATE)
+
+
+def noise(clip: str) -> bytes:
+    return load_clip(NOISE / clip)
+
+
+def looped(pcm: bytes, length_s: float) -> bytes:
+    size = int(length_s * command.SAMPLE_RATE) * 2
+    return (pcm * (size // len(pcm) + 1))[:size]
+
+
+def mix(background: bytes, voice: bytes, at_s: float) -> bytes:
+    """`voice` spoken over `background`, starting `at_s` seconds in."""
+    out = np.frombuffer(background, dtype=np.int16).astype(np.int32)
+    start = int(at_s * command.SAMPLE_RATE)
+    said = np.frombuffer(voice, dtype=np.int16)
+    out[start : start + len(said)] += said
+    return np.clip(out, -32768, 32767).astype(np.int16).tobytes()
+
+
+@needs_vad
 @needs_tts
 def test_voiced_audio_drops_silence(tmp_path: Path) -> None:
     said = speech("what is the weather today", tmp_path)
@@ -251,6 +320,7 @@ def make_session(transcriber, verifier=None) -> tuple[command.CommandSession, li
     return command.CommandSession(transcriber, events.append, verifier=verifier, synchronous=True), events
 
 
+@needs_vad
 class TestCommandSession:
     """wake -> capture -> transcription events, with a stubbed transcriber."""
 
@@ -290,6 +360,13 @@ class TestCommandSession:
         session.begin(b"")
         assert not session.active
         assert events == [{"type": "transcript", "id": 1, "error": "OPENAI_API_KEY is not set"}]
+
+    def test_without_voice_activity_model_reports_which_file(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FRIDAY_VAD_MODEL", str(tmp_path / "gone.onnx"))
+        session, events = make_session(StubTranscriber())
+        session.begin(b"")
+        assert not session.active
+        assert events[-1]["type"] == "transcript" and "gone.onnx" in events[-1]["error"]
 
     def test_cancel_reports_the_capture_as_cancelled(self) -> None:
         """A mic restart mid-command must not leave the HUD waiting forever."""

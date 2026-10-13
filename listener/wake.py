@@ -40,6 +40,7 @@ from vosk import KaldiRecognizer, Model, SetLogLevel
 
 from command import PREROLL_BYTES, CommandSession, build_transcriber
 from speaker import UnusableVerifier, build_verifier, voiceprint_path
+from vad import VadUnavailable, default_vad
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = 1600  # 50 ms of s16 mono audio
@@ -409,6 +410,10 @@ def main() -> None:
     transcriber = build_transcriber()
     if transcriber is None:
         log("OPENAI_API_KEY not set (environment or .env): voice commands will not be transcribed")
+    try:
+        default_vad()  # loaded now, so the first command does not wait for it
+    except VadUnavailable as exc:
+        log(f"{exc}: voice commands cannot be recorded")
     verifier = build_verifier()
     if verifier is None:
         log("no voiceprint enrolled (bin/friday enroll): commands are accepted from any voice")

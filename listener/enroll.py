@@ -33,6 +33,7 @@ from speaker import (
     speaker_threshold,
     voiceprint_path,
 )
+from vad import VadUnavailable
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,7 @@ def main() -> None:
             # Saved before the service resumes, so it starts with the new voiceprint.
             with paused_service():
                 scores = save_voiceprint(model, enroll_from_mic(model, args.target, args.save), args.out)
-    except VoiceprintError as exc:
+    except (VoiceprintError, VadUnavailable) as exc:
         raise SystemExit(f"enrollment failed: {exc}") from exc
     except KeyboardInterrupt:
         raise SystemExit("\nenrollment cancelled; the previous voiceprint (if any) is unchanged") from None

@@ -15,6 +15,7 @@ import pytest
 import command
 import enroll
 from speaker import Verdict
+from test_vad import needs_vad
 
 ESPEAK = shutil.which("espeak-ng")
 FFMPEG = shutil.which("ffmpeg")
@@ -91,6 +92,7 @@ class StubTranscriber:
         return "Friday, stop the music."
 
 
+@needs_vad
 @pytest.mark.skipif(not (ESPEAK and FFMPEG), reason="espeak-ng and ffmpeg required")
 class TestVoiceSampleLog:
     def feed_command(self, session: command.CommandSession, tmp_path: Path) -> None:
@@ -121,6 +123,7 @@ class TestVoiceSampleLog:
         assert mode(saved) == 0o600
 
 
+@needs_vad
 @pytest.mark.skipif(not FFMPEG or not enroll.DEFAULT_SPEAKER_MODEL.is_file(), reason="speaker model or ffmpeg missing")
 def test_enroll_can_save_its_samples(tmp_path: Path) -> None:
     wavs = []

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import wake
+from test_vad import needs_vad
 
 ESPEAK = shutil.which("espeak-ng")
 FFMPEG = shutil.which("ffmpeg")
@@ -279,6 +280,7 @@ class RecordingVerifier:
         return Verdict(True, 0.9)
 
 
+@needs_vad
 @needs_tts
 @needs_model
 @pytest.mark.parametrize("pause", [0.0, 1.5])
@@ -318,6 +320,7 @@ def detections_in(audio: bytes, model) -> list[float]:
     return detect_stream(silence(0.3) + audio + silence(1.0), model)
 
 
+@needs_vad
 @needs_tts
 @needs_model
 def test_second_command_is_cut_at_its_own_wake_word(model, tmp_path: Path, monkeypatch) -> None:

@@ -1,8 +1,9 @@
 """Voice command capture and transcription for F.R.I.D.A.Y.
 
 After the wake word fires, CommandSession records the spoken command from the
-same microphone stream, ends it locally with WebRTC VAD (no audio leaves the
-machine before the wake word, and silence is never uploaded), checks that the
+same microphone stream, ends it locally with Silero VAD (vad.py; no audio
+leaves the machine before the wake word, and silence, fan noise or typing is
+never uploaded as a command), checks that the
 voice is the enrolled one (speaker.py), then sends the utterance to OpenAI
 speech-to-text and streams the text back as events:
 
@@ -34,12 +35,11 @@ from pathlib import Path
 from typing import Protocol
 
 from speaker import UnusableVerifier, Verdict
+from vad import FRAME_BYTES, SileroVad, SpeechDetector, VadUnavailable, default_vad
 
 SAMPLE_RATE = 16000
-FRAME_BYTES = 960  # 30 ms of s16 mono, one of the frame sizes WebRTC VAD accepts
-FRAME_S = FRAME_BYTES / (2 * SAMPLE_RATE)
-VAD_MODE = 2  # 0 (permissive) .. 3 (aggressive about rejecting non-speech)
-START_WINDOW = 10  # frames (300 ms) considered when deciding speech has started
+FRAME_S = FRAME_BYTES / (2 * SAMPLE_RATE)  # 32 ms, the frame Silero VAD scores
+START_WINDOW = 10  # frames (320 ms) considered when deciding speech has started
 START_VOICED = 7  # of START_WINDOW frames must be voiced
 NO_SPEECH_TIMEOUT_S = 5.0  # give up if no command starts within this long after the wake word
 END_SILENCE_S = 1.0  # trailing silence that ends the command
@@ -71,13 +71,11 @@ def strip_wake_phrase(text: str) -> str:
     return WAKE_PREFIX.sub("", text, count=1).strip()
 
 
-def voiced_audio(pcm: bytes) -> bytes:
-    """Only the 30 ms frames WebRTC VAD classifies as speech."""
-    import webrtcvad
-
-    vad = webrtcvad.Vad(VAD_MODE)
+def voiced_audio(pcm: bytes, vad: SileroVad | None = None) -> bytes:
+    """Only the 32 ms frames that are speech."""
+    detector = SpeechDetector((vad or default_vad()).stream())
     frames = (pcm[i : i + FRAME_BYTES] for i in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES))
-    return b"".join(frame for frame in frames if vad.is_speech(frame, SAMPLE_RATE))
+    return b"".join(frame for frame in frames if detector.is_speech(frame))
 
 
 def save_private_wav(folder: Path, name: str, pcm: bytes) -> Path:
@@ -110,13 +108,11 @@ class Endpointer:
     within NO_SPEECH_TIMEOUT_S) or "maxlength" (MAX_CAPTURE_S reached).
     """
 
-    def __init__(self, preroll: bytes = b"") -> None:
-        import webrtcvad
-
-        self._vad = webrtcvad.Vad(VAD_MODE)
+    def __init__(self, preroll: bytes = b"", vad: SileroVad | None = None) -> None:
+        """Raises VadUnavailable when the voice activity model cannot be loaded."""
+        self._detector = SpeechDetector((vad or default_vad()).stream())
         self._chunks = [preroll]
         self._speech: list[bytes] = []
-        self._pending = b""
         self._window: deque[bool] = deque(maxlen=START_WINDOW)
         self._elapsed_s = 0.0
         self._silent_s = 0.0
@@ -124,8 +120,10 @@ class Endpointer:
         # The wake event lands late, so a short command ("Friday stop") may be
         # entirely in the pre-roll. Run it through the VAD without counting it
         # against the timeouts, which start at the wake event.
-        for i in range(0, len(preroll) - FRAME_BYTES + 1, FRAME_BYTES):
+        whole = len(preroll) - len(preroll) % FRAME_BYTES
+        for i in range(0, whole, FRAME_BYTES):
             self._classify(preroll[i : i + FRAME_BYTES], counts_time=False)
+        self._pending = preroll[whole:]  # its last partial frame starts the first live one
 
     @property
     def audio(self) -> bytes:
@@ -146,7 +144,7 @@ class Endpointer:
         return None
 
     def _classify(self, frame: bytes, counts_time: bool = True) -> str | None:
-        voiced = self._vad.is_speech(frame, SAMPLE_RATE)
+        voiced = self._detector.is_speech(frame)
         if voiced:
             self._speech.append(frame)
         return self._frame(voiced, counts_time)
@@ -207,7 +205,6 @@ def build_transcriber() -> Transcriber | None:
     """OpenAI transcriber from the environment (and ROOT/.env), or None if unavailable."""
     try:
         import httpx2
-        import webrtcvad  # noqa: F401 - needed by Endpointer
         from dotenv import load_dotenv
         from openai import DefaultHttpx2Client, OpenAI
 
@@ -284,7 +281,12 @@ class CommandSession:
             self._endpointer = None
             self._emit({"type": "transcript", "id": self._id, "error": "OPENAI_API_KEY is not set"})
             return
-        self._endpointer = Endpointer(preroll)
+        try:
+            self._endpointer = Endpointer(preroll)
+        except VadUnavailable as exc:
+            self._endpointer = None
+            self._emit({"type": "transcript", "id": self._id, "error": str(exc)})
+            return
         self._emit({"type": "capture", "id": self._id, "state": "listening"})
 
     def cancel(self) -> None:
