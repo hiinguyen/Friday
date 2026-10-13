@@ -4,11 +4,13 @@ Reads 16 kHz mono PCM from PipeWire (pw-record) or a WAV file, runs a
 grammar-constrained Vosk recognizer, and writes JSON events to stdout,
 one per line:
 
-    {"type": "ready"}
+    {"type": "ready", "voiceprint": "armed"}  # or "off" (any voice) / "unusable" (none)
     {"type": "wake", "conf": 0.93}
     {"type": "level", "value": 0.12}      # mic loudness 0..1, ~20 Hz
     {"type": "error", "message": "..."}
 
+After a wake event the following audio is the spoken command; command.py
+records and transcribes it and adds "capture" / "transcript" events.
 The Electron shell consumes these events. Run standalone to debug:
 
     python listener/wake.py               # live microphone
@@ -26,12 +28,18 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import wave
+from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 from vosk import KaldiRecognizer, Model, SetLogLevel
+
+from command import PREROLL_BYTES, CommandSession, build_transcriber
+from speaker import UnusableVerifier, build_verifier, voiceprint_path
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = 1600  # 50 ms of s16 mono audio
@@ -51,11 +59,16 @@ DEFAULT_MIN_CONF = 0.6
 COOLDOWN_S = 2.0
 LEVEL_INTERVAL_S = 0.05
 RESTART_BACKOFF_S = (1, 2, 5, 10)
+PREROLL_CHUNKS = PREROLL_BYTES // CHUNK_BYTES
+
+_emit_lock = threading.Lock()
 
 
 def emit(event: dict) -> None:
-    sys.stdout.write(json.dumps(event) + "\n")
-    sys.stdout.flush()
+    # Transcription threads emit too; keep each JSON line whole.
+    with _emit_lock:
+        sys.stdout.write(json.dumps(event) + "\n")
+        sys.stdout.flush()
 
 
 def log(message: str) -> None:
@@ -83,6 +96,20 @@ def wake_confidence(result_json: str) -> float | None:
         if word.get("word") == WAKE_WORD:
             return float(word.get("conf", 0.0))
     return None
+
+
+def wake_word_span(result_json: str) -> tuple[float, float] | None:
+    """Stream times (s) at which the wake word started and ended, from a final or partial result."""
+    result = json.loads(result_json)
+    for word in result.get("result", result.get("partial_result", [])):
+        if word.get("word") == WAKE_WORD and "start" in word and "end" in word:
+            return float(word["start"]), float(word["end"])
+    return None
+
+
+def wake_word_end(result_json: str) -> float | None:
+    span = wake_word_span(result_json)
+    return span[1] if span else None
 
 
 def partial_has_committed_wake(partial_json: str) -> bool:
@@ -113,24 +140,30 @@ class WakeDetector:
     PARTIAL_STABLE = 2  # x 50 ms chunks
 
     def __init__(self, model: Model, min_conf: float) -> None:
-        self._rec = KaldiRecognizer(model, SAMPLE_RATE, GRAMMAR)
-        self._rec.SetWords(True)
+        self._model = model
+        self._rec = self._new_recognizer()
         self._min_conf = min_conf
-        self._audio_s = 0.0
+        self._audio_s = 0.0  # total audio fed, for the cooldown
+        self._stream_s = 0.0  # audio since the last reset; Vosk word times use this clock
+        self._wake_span: tuple[float, float] | None = None
         self._last_wake = -COOLDOWN_S
         self._partial_hits = 0
         self._fired_this_utterance = False
 
     def feed(self, chunk: bytes) -> float | None:
         """Feed audio; return confidence when the wake word is detected."""
-        self._audio_s += len(chunk) / (2 * SAMPLE_RATE)
+        seconds = len(chunk) / (2 * SAMPLE_RATE)
+        self._audio_s += seconds
+        self._stream_s += seconds
         if self._rec.AcceptWaveform(chunk):
             return self._end_utterance(self._rec.Result())
 
         if self._fired_this_utterance:
             return None
-        if partial_has_committed_wake(self._rec.PartialResult()):
+        partial = self._rec.PartialResult()
+        if partial_has_committed_wake(partial):
             self._partial_hits += 1
+            self._wake_span = wake_word_span(partial)
         else:
             self._partial_hits = 0
         if self._partial_hits < self.PARTIAL_STABLE:
@@ -143,9 +176,22 @@ class WakeDetector:
         """End of input: decide on whatever audio is still buffered."""
         return self._end_utterance(self._rec.FinalResult())
 
+    def _new_recognizer(self) -> KaldiRecognizer:
+        rec = KaldiRecognizer(self._model, SAMPLE_RATE, GRAMMAR)
+        rec.SetWords(True)
+        rec.SetPartialWords(True)
+        return rec
+
     def reset(self) -> None:
-        """Start a fresh audio stream (e.g. after the microphone restarted)."""
-        self._rec.Reset()
+        """Start a fresh audio stream (after a command, or when the microphone restarted).
+
+        A new recognizer (~0.2 ms) rather than KaldiRecognizer.Reset(): Reset()
+        keeps an offset in its word timestamps, which would misplace the cut
+        between the wake word and the command.
+        """
+        self._rec = self._new_recognizer()
+        self._stream_s = 0.0
+        self._wake_span = None
         self._partial_hits = 0
         self._fired_this_utterance = False
 
@@ -157,7 +203,20 @@ class WakeDetector:
         conf = wake_confidence(result_json)
         if fired_early or conf is None or conf < self._min_conf:
             return None
+        self._wake_span = wake_word_span(result_json)
         return self._accept(conf)
+
+    def wake_word_window(self) -> tuple[float, float] | None:
+        """Seconds of audio fed since the last detected wake word (started, ended); None if unknown."""
+        if self._wake_span is None:
+            return None
+        start, end = self._wake_span
+        return max(0.0, self._stream_s - start), max(0.0, self._stream_s - end)
+
+    def seconds_since_wake_word(self) -> float | None:
+        """Audio fed after the last detected wake word ended (None if its timing is unknown)."""
+        window = self.wake_word_window()
+        return window[1] if window else None
 
     def _accept(self, conf: float) -> float | None:
         if self._audio_s - self._last_wake < COOLDOWN_S:
@@ -227,34 +286,71 @@ def read_chunks(stream: BinaryIO) -> Iterator[bytes]:
         yield chunk
 
 
-def process(detector: WakeDetector, chunks: Iterator[bytes]) -> None:
+def process(detector: WakeDetector, session: CommandSession, chunks: Iterator[bytes]) -> None:
+    """Wake-word mode until "Friday", then command mode until the command ends."""
     last_level = 0.0
+    preroll: deque[bytes] = deque(maxlen=PREROLL_CHUNKS)
     for chunk in chunks:
         now = time.monotonic()
         if now - last_level >= LEVEL_INTERVAL_S:
             emit({"type": "level", "value": round(rms_level(chunk), 3)})
             last_level = now
+        if session.active:
+            if not session.feed(chunk):
+                # The command contained speech the wake detector never saw; start clean.
+                detector.reset()
+                preroll.clear()
+            continue
+        preroll.append(chunk)
         conf = detector.feed(chunk)
         if conf is not None:
             emit({"type": "wake", "conf": round(conf, 3)})
+            recent, window = b"".join(preroll), detector.wake_word_window()
+            session.begin(
+                command_preroll(recent, window[1] if window else None),
+                wake_audio=wake_word_audio(recent, window),
+            )
 
 
-def run_wav(detector: WakeDetector, path: Path) -> None:
+def command_preroll(recent: bytes, after_wake_s: float | None) -> bytes:
+    """The part of the recent audio that follows the wake word.
+
+    The wake event lands late (after a pause, or a few words into "Friday open
+    the..."), so the start of the command is already in `recent`. Cutting at
+    the word boundary keeps the wake word out of the transcript; a clipped
+    "Friday" would otherwise be transcribed as some other word.
+    """
+    if after_wake_s is None:
+        return recent
+    keep = min(len(recent), int(after_wake_s * SAMPLE_RATE) * 2)
+    return recent[len(recent) - keep :] if keep else b""
+
+
+def wake_word_audio(recent: bytes, window: tuple[float, float] | None) -> bytes:
+    """The spoken wake word itself, cut from the recent audio, for speaker verification."""
+    if window is None:
+        return b""
+    since_start, since_end = window
+    start = max(0, len(recent) - int(since_start * SAMPLE_RATE) * 2)
+    end = max(0, len(recent) - int(since_end * SAMPLE_RATE) * 2)
+    return recent[start:end]
+
+
+def ready_event(session: CommandSession) -> dict:
+    return {"type": "ready", "voiceprint": session.voiceprint}
+
+
+def run_wav(detector: WakeDetector, session: CommandSession, path: Path) -> None:
     with wave.open(str(path), "rb") as wav:
         if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) != (SAMPLE_RATE, 1, 2):
             raise SystemExit(f"{path}: need {SAMPLE_RATE} Hz mono s16 WAV")
         frames = wav.readframes(wav.getnframes())
-    bytes_per_s = SAMPLE_RATE * 2
-    for i in range(0, len(frames), CHUNK_BYTES):
-        conf = detector.feed(frames[i : i + CHUNK_BYTES])
-        if conf is not None:
-            emit({"type": "wake", "conf": round(conf, 3), "at": round((i + CHUNK_BYTES) / bytes_per_s, 2)})
-    conf = detector.flush()
-    if conf is not None:
-        emit({"type": "wake", "conf": round(conf, 3), "at": round(len(frames) / bytes_per_s, 2)})
+    process(detector, session, (frames[i : i + CHUNK_BYTES] for i in range(0, len(frames), CHUNK_BYTES)))
+    if not session.active and (conf := detector.flush()) is not None:
+        emit({"type": "wake", "conf": round(conf, 3)})
 
 
-def run_mic(detector: WakeDetector, explicit_target: str | None) -> None:
+def run_mic(detector: WakeDetector, session: CommandSession, explicit_target: str | None) -> None:
     """Capture forever, re-resolving the mic and restarting pw-record if it goes away."""
     attempt = 0
     recovering = False
@@ -269,14 +365,15 @@ def run_mic(detector: WakeDetector, explicit_target: str | None) -> None:
             proc = subprocess.Popen(mic_command(target), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             assert proc.stdout is not None
             detector.reset()
+            session.cancel()
             try:
                 chunks = read_chunks(proc.stdout)
                 first = next(chunks, None)
                 if first is not None:
                     if recovering:
-                        emit({"type": "ready"})
+                        emit(ready_event(session))
                         recovering = False
-                    process(detector, itertools.chain([first], chunks))
+                    process(detector, session, itertools.chain([first], chunks))
             finally:
                 proc.kill()
                 proc.wait()
@@ -309,14 +406,30 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     SetLogLevel(-1)
     detector = WakeDetector(Model(str(args.model)), args.min_conf)
-    emit({"type": "ready"})
+    transcriber = build_transcriber()
+    if transcriber is None:
+        log("OPENAI_API_KEY not set (environment or .env): voice commands will not be transcribed")
+    verifier = build_verifier()
+    if verifier is None:
+        log("no voiceprint enrolled (bin/friday enroll): commands are accepted from any voice")
+    elif isinstance(verifier, UnusableVerifier):
+        log(f"voiceprint {voiceprint_path()} unusable, every command will be rejected: {verifier.reason}")
+    voice_log = Path(os.environ["FRIDAY_VOICE_LOG"]) if os.environ.get("FRIDAY_VOICE_LOG") else None
+    if voice_log is not None:
+        log(f"saving every scored voice sample to {voice_log} (FRIDAY_VOICE_LOG)")
+    session = CommandSession(transcriber, emit, verifier=verifier, voice_log=voice_log)
+    emit(ready_event(session))
     try:
         if args.wav:
-            run_wav(detector, args.wav)
+            run_wav(detector, session, args.wav)  # returns once queued transcriptions finish
         else:
-            run_mic(detector, args.target)
-    except (KeyboardInterrupt, BrokenPipeError):
-        pass
+            run_mic(detector, session, args.target)
+    except (KeyboardInterrupt, BrokenPipeError, SystemExit):
+        # pw-record is already gone (run_mic's finally). Do not let a
+        # transcription still talking to the API delay shutdown.
+        session.close()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

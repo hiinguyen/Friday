@@ -3,3 +3,4 @@ models/
 app/node_modules/
 __pycache__/
 .pytest_cache/
+.env

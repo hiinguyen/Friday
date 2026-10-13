@@ -64,6 +64,18 @@ class TestResultParsing:
         result = json.dumps({"result": [{"word": "hey", "conf": 1.0}, {"word": "friday", "conf": 0.83}]})
         assert wake.wake_confidence(result) == pytest.approx(0.83)
 
+    def test_wake_word_end_from_final_and_partial(self) -> None:
+        final = json.dumps({"result": [{"word": "friday", "conf": 1.0, "start": 0.5, "end": 1.14}]})
+        partial = json.dumps({"partial": "friday [unk]", "partial_result": [{"word": "friday", "start": 0.4, "end": 0.9}]})
+        assert wake.wake_word_end(final) == pytest.approx(1.14)
+        assert wake.wake_word_end(partial) == pytest.approx(0.9)
+        assert wake.wake_word_end(json.dumps({"partial": "fried"})) is None
+
+    def test_wake_word_span(self) -> None:
+        final = json.dumps({"result": [{"word": "hey", "start": 0.1, "end": 0.4}, {"word": "friday", "start": 0.5, "end": 1.14}]})
+        assert wake.wake_word_span(final) == pytest.approx((0.5, 1.14))
+        assert wake.wake_word_span(json.dumps({"result": [{"word": "friday"}]})) is None
+
     def test_wake_confidence_absent(self) -> None:
         assert wake.wake_confidence(json.dumps({"result": [{"word": "fried", "conf": 1.0}]})) is None
         assert wake.wake_confidence(json.dumps({"text": ""})) is None
@@ -81,6 +93,44 @@ class TestResultParsing:
     )
     def test_partial_commit_rule(self, partial: str, expected: bool) -> None:
         assert wake.partial_has_committed_wake(json.dumps({"partial": partial})) is expected
+
+
+
+class TestCommandPreroll:
+    def test_keeps_only_audio_after_the_wake_word(self) -> None:
+        recent = bytes(range(10)) * 3200  # 1 s
+        assert wake.command_preroll(recent, 0.25) == recent[-8000:]
+
+    def test_unknown_timing_keeps_everything(self) -> None:
+        assert wake.command_preroll(b"abcd", None) == b"abcd"
+
+    def test_clamps_to_available_audio(self) -> None:
+        assert wake.command_preroll(b"abcd", 9.0) == b"abcd"
+        assert wake.command_preroll(b"abcd", 0.0) == b""
+
+
+class TestWakeWordAudio:
+    def test_slices_out_the_spoken_wake_word(self) -> None:
+        recent = bytes(range(10)) * 3200  # 1 s
+        assert wake.wake_word_audio(recent, (0.75, 0.25)) == recent[8000:24000]
+
+    def test_unknown_timing_gives_nothing(self) -> None:
+        assert wake.wake_word_audio(b"abcd", None) == b""
+
+    def test_clamps_to_available_audio(self) -> None:
+        assert wake.wake_word_audio(b"abcd", (9.0, 0.0)) == b"abcd"
+
+
+def test_ready_event_says_whether_voices_are_verified() -> None:
+    from command import CommandSession
+    from speaker import UnusableVerifier
+
+    def ready(verifier) -> dict:
+        return wake.ready_event(CommandSession(None, lambda _e: None, verifier=verifier))
+
+    assert ready(None) == {"type": "ready", "voiceprint": "off"}
+    assert ready(object()) == {"type": "ready", "voiceprint": "armed"}
+    assert ready(UnusableVerifier("outdated format; re-enroll")) == {"type": "ready", "voiceprint": "unusable"}
 
 
 def source(name: str, api: str, media_class: str = "Audio/Source", priority: int = 2000) -> dict:
@@ -207,3 +257,86 @@ def test_cooldown_is_measured_in_audio_time(model, tmp_path: Path) -> None:
     a = wav_bytes(synthesize("Friday", tmp_path / "a.wav", "en-us"))
     gap = max(0.0, wake.COOLDOWN_S - 1.6)
     assert len(detect_stream(a + silence(gap) + a + silence(1.0), model)) == 1
+
+
+class RecordingTranscriber:
+    def __init__(self) -> None:
+        self.audio: list[bytes] = []
+
+    def transcribe(self, pcm: bytes, on_delta) -> str:
+        self.audio.append(pcm)
+        return "Friday, open the browser."
+
+
+class RecordingVerifier:
+    def __init__(self) -> None:
+        self.samples: list[bytes] = []
+
+    def check(self, pcm: bytes):
+        from speaker import Verdict
+
+        self.samples.append(pcm)
+        return Verdict(True, 0.9)
+
+
+@needs_tts
+@needs_model
+@pytest.mark.parametrize("pause", [0.0, 1.5])
+def test_wake_then_command_is_captured_and_transcribed(model, tmp_path: Path, monkeypatch, pause: float) -> None:
+    """'Friday, open the browser' said in one breath, or with a pause after the wake word."""
+    from command import CommandSession
+
+    events: list[dict] = []
+    monkeypatch.setattr(wake, "emit", events.append)
+    stt, voice = RecordingTranscriber(), RecordingVerifier()
+    session = CommandSession(stt, events.append, verifier=voice, synchronous=True)
+    detector = wake.WakeDetector(model, wake.DEFAULT_MIN_CONF)
+    friday = wav_bytes(synthesize("Friday", tmp_path / "w.wav", "en-us"))
+    order = wav_bytes(synthesize("open the browser", tmp_path / "c.wav", "en-us"))
+    stream = silence(0.5) + friday + silence(pause) + order + silence(2.0)
+
+    wake.process(detector, session, (stream[i : i + wake.CHUNK_BYTES] for i in range(0, len(stream), wake.CHUNK_BYTES)))
+
+    events = [e for e in events if e["type"] != "level"]
+    assert [e["type"] for e in events].count("wake") == 1
+    assert [e.get("state") for e in events if e["type"] == "capture"] == ["listening", "processing", "verified"]
+    # The speaker is judged on the spoken "Friday" as well as the order: more
+    # voice makes short commands ("Friday, stop") verifiable.
+    (sample,) = voice.samples
+    assert len(detections_in(sample, model)) == 1
+    assert len(sample) > 0.7 * len(friday) + 0.6 * len(order)
+    assert events[-1] == {"type": "transcript", "id": 1, "text": "open the browser.", "raw": "Friday, open the browser.", "final": True}
+    # The transcriber gets the whole order but not the wake word: a clipped
+    # "Friday" at the start used to be transcribed as a stray word ("Private.").
+    assert len(stt.audio) == 1
+    captured = stt.audio[0]
+    assert len(captured) > len(order)
+    assert detections_in(captured, model) == []
+
+
+def detections_in(audio: bytes, model) -> list[float]:
+    return detect_stream(silence(0.3) + audio + silence(1.0), model)
+
+
+@needs_tts
+@needs_model
+def test_second_command_is_cut_at_its_own_wake_word(model, tmp_path: Path, monkeypatch) -> None:
+    """Regression: Vosk's Reset() does not restart its word clock, so the second
+    command was cut at the wrong place and lost its first words."""
+    from command import CommandSession
+
+    monkeypatch.setattr(wake, "emit", lambda _e: None)
+    stt = RecordingTranscriber()
+    session = CommandSession(stt, lambda _e: None, synchronous=True)
+    detector = wake.WakeDetector(model, wake.DEFAULT_MIN_CONF)
+    said = wav_bytes(synthesize("Friday, open the browser", tmp_path / "a.wav", "en-us"))
+    stream = silence(0.5) + said + silence(2.0) + silence(1.7) + said + silence(2.0)
+
+    wake.process(detector, session, (stream[i : i + wake.CHUNK_BYTES] for i in range(0, len(stream), wake.CHUNK_BYTES)))
+
+    assert len(stt.audio) == 2
+    first, second = stt.audio
+    for captured in (first, second):
+        assert detections_in(captured, model) == []
+    # Identical utterances must yield (nearly) identical recordings.
+    assert abs(len(first) - len(second)) / (2 * wake.SAMPLE_RATE) < 0.1
