@@ -41,7 +41,8 @@ let visible = false;
 // raced the power-down animation and must not hide the window.
 let wakeSeq = 0;
 let statsTimer = null;
-let listenerStatus = { listener: 'starting', message: 'Starting wake-word engine' };
+let listenerStatus = { listener: 'starting', message: 'Starting wake-word engine', voiceprint: 'off' };
+const VOICEPRINT_LOG = { armed: 'enrolled voice only', unusable: 'voiceprint unusable, rejecting every command', off: 'any voice' };
 const sampleStats = createSampler();
 const listener = new WakeListener();
 
@@ -152,8 +153,8 @@ function runCommand(command) {
 }
 
 function setListenerStatus(status) {
-  listenerStatus = status;
-  send('hud:status', status);
+  listenerStatus = { ...listenerStatus, ...status };
+  send('hud:status', listenerStatus);
 }
 
 app.on('second-instance', (_event, argv, _cwd, additionalData) => {
@@ -165,9 +166,9 @@ app.on('second-instance', (_event, argv, _cwd, additionalData) => {
 app.whenReady().then(() => {
   ipcMain.on('hud:hidden', onHudHidden);
 
-  listener.on('ready', () => {
-    log('wake-word engine ready, listening for "Friday"');
-    setListenerStatus({ listener: 'ready', message: 'Listening for wake word' });
+  listener.on('ready', ({ voiceprint }) => {
+    log(`wake-word engine ready, listening for "Friday" (${VOICEPRINT_LOG[voiceprint]})`);
+    setListenerStatus({ listener: 'ready', message: 'Listening for wake word', voiceprint });
   });
   listener.on('wake', (conf) => {
     log(`wake word detected (conf=${conf})`);
@@ -175,6 +176,21 @@ app.whenReady().then(() => {
   });
   listener.on('level', (value) => {
     if (visible) send('hud:level', value);
+  });
+  // The renderer ignores these while powered down; ids discard stale ones.
+  listener.on('capture', (event) => {
+    if (event.error) console.error(`[friday] voiceprint check #${event.id} failed: ${event.error}`);
+    else if (event.state === 'unclear') log(`command #${event.id}: too little speech to verify the voice`);
+    else if (event.state === 'verified' || event.state === 'rejected') {
+      log(`command #${event.id}: voice ${event.state} (score=${event.score})`);
+    }
+    send('hud:capture', event);
+  });
+  listener.on('transcript', (event) => {
+    // Spoken words stay out of the journal unless debugging.
+    if (event.final) log(`command #${event.id}: ${DEBUG ? JSON.stringify(event.text) : `${event.text.length} chars`}`);
+    if (event.error) console.error(`[friday] transcription #${event.id} failed: ${event.error}`);
+    send('hud:transcript', event);
   });
   listener.on('error', (message) => {
     console.error(`[friday] ${message}`);

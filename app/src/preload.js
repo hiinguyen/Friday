@@ -2,7 +2,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-const INBOUND = ['hud:wake', 'hud:level', 'hud:stats', 'hud:status', 'hud:dismiss'];
+const INBOUND = ['hud:wake', 'hud:level', 'hud:stats', 'hud:status', 'hud:dismiss', 'hud:capture', 'hud:transcript'];
 
 contextBridge.exposeInMainWorld('friday', {
   on(channel, callback) {

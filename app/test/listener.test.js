@@ -6,7 +6,7 @@ const { WakeListener } = require('../src/listener');
 
 function collect(listener) {
   const events = [];
-  for (const name of ['ready', 'wake', 'level', 'error']) {
+  for (const name of ['ready', 'wake', 'level', 'error', 'capture', 'transcript']) {
     listener.on(name, (payload) => events.push([name, payload]));
   }
   return events;
@@ -15,15 +15,39 @@ function collect(listener) {
 test('translates listener JSON lines into typed events', () => {
   const listener = new WakeListener();
   const events = collect(listener);
-  listener.handleLine('{"type": "ready"}');
+  listener.handleLine('{"type": "ready", "voiceprint": "armed"}');
   listener.handleLine('{"type": "wake", "conf": 0.93}');
   listener.handleLine('{"type": "level", "value": 0.25}');
   listener.handleLine('{"type": "error", "message": "mic gone"}');
   assert.deepEqual(events, [
-    ['ready', undefined],
+    ['ready', { voiceprint: 'armed' }],
     ['wake', 0.93],
     ['level', 0.25],
     ['error', 'mic gone'],
+  ]);
+});
+
+test('a ready event names the voiceprint state, defaulting to off', () => {
+  const listener = new WakeListener();
+  const events = collect(listener);
+  listener.handleLine('{"type": "ready", "voiceprint": "unusable"}');
+  listener.handleLine('{"type": "ready"}');
+  listener.handleLine('{"type": "ready", "voiceprint": "bogus"}');
+  assert.deepEqual(events, [
+    ['ready', { voiceprint: 'unusable' }],
+    ['ready', { voiceprint: 'off' }],
+    ['ready', { voiceprint: 'off' }],
+  ]);
+});
+
+test('forwards voice command events whole', () => {
+  const listener = new WakeListener();
+  const events = collect(listener);
+  listener.handleLine('{"type": "capture", "id": 2, "state": "listening"}');
+  listener.handleLine('{"type": "transcript", "id": 2, "delta": "open"}');
+  assert.deepEqual(events, [
+    ['capture', { type: 'capture', id: 2, state: 'listening' }],
+    ['transcript', { type: 'transcript', id: 2, delta: 'open' }],
   ]);
 });
 

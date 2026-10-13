@@ -6,13 +6,13 @@
 // clip-path, so the compositor handles them. The only per-frame raster work
 // is the reactor stage canvas, sized to the reactor's bounding box.
 
+import { CommandTracker, dismissDeadline } from './command.js';
 import { scrambleText, typeText } from './fx.js';
 import { Panels } from './panels.js';
 import { Particles } from './particles.js';
 import { Reactor } from './reactor.js';
 import { VoiceTracker } from './voice.js';
 
-const IDLE_DISMISS_MS = 12000;
 const EXIT_DURATION_S = 0.9;
 const MAX_DT = 0.05;
 const REACTOR_SCALE = 0.19; // reactor radius as a fraction of the short screen side
@@ -21,6 +21,7 @@ const BLOOM_DOWNSCALE = 4;
 const SHOCK_DIAMETER = 5.2; // x R
 const SHOCK_MS = 1150;
 const PERF_WINDOW_MS = [2000, 5000]; // steady-state sample window after wake
+const LOG_ERROR_CHARS = 64;
 
 const $ = (id) => document.getElementById(id);
 const bridge = window.friday;
@@ -31,6 +32,7 @@ const reactor = new Reactor();
 const particles = new Particles();
 const panels = new Panels();
 const voice = new VoiceTracker();
+const command = new CommandTracker();
 
 const view = { dpr: 1, cx: 0, cy: 0, R: 0, stage: 0 };
 const hud = {
@@ -48,7 +50,12 @@ const hud = {
   cancelTyping: () => {},
   cancelScramble: () => {},
 };
-let listenerStatus = { listener: 'starting', message: '' };
+let listenerStatus = { listener: 'starting', message: '', voiceprint: 'off' };
+const VOICEPRINT_BOOT = {
+  armed: ['ok', 'ARMED'],
+  unusable: ['err', 'FAULT'],
+  off: ['warn', 'NOT ENROLLED'],
+};
 
 function setState(state) {
   hud.state = state;
@@ -117,7 +124,7 @@ function greetingFor(date) {
 function bootSequence(conf) {
   panels.sequence([
     [120, 'Wake word acknowledged', 'ok', `${Math.round(conf * 100)}%`],
-    [420, 'Voiceprint match', 'ok', 'CONFIRMED'],
+    [420, 'Voiceprint lock', ...(VOICEPRINT_BOOT[listenerStatus.voiceprint] ?? VOICEPRINT_BOOT.off)],
     [720, 'Neural interface', 'ok', 'ONLINE'],
     [1020, 'Telemetry uplink', 'ok', 'SYNCED'],
     [1320, 'Audio channel', 'ok', 'OPEN'],
@@ -132,6 +139,8 @@ function boot(conf) {
   hud.wakeAt = performance.now();
   hud.perf = hud.debug ? { frames: [], reported: false } : null;
   voice.lastSpeechAt = 0;
+  command.reset();
+  renderCommand();
   layout();
   reactor.reset();
   particles.reset(view.R);
@@ -179,6 +188,9 @@ function dismiss() {
 }
 
 function finishExit() {
+  // Dismissed mid-command (Esc): its remaining events are dropped while the HUD
+  // is off, so forget it; ids keep any late ones stale.
+  command.reset();
   stopLoop();
   panels.stop();
   hud.cancelTyping();
@@ -203,7 +215,67 @@ function finishExit() {
 function statusText() {
   if (listenerStatus.listener === 'error') return 'Microphone offline';
   if (hud.state === 'exit') return 'Standing by';
-  return voice.speaking ? 'Voice input detected' : 'Listening';
+  switch (command.phase) {
+    case 'listening':
+      return voice.speaking ? 'Voice input detected' : 'Listening';
+    case 'transcribing':
+      return 'Transcribing';
+    case 'done':
+      return 'Command received';
+    case 'error':
+      return 'Transcription failed';
+    case 'rejected':
+      return command.error ? 'Voiceprint unavailable' : 'Voice not recognized';
+    case 'unclear':
+      return 'Too short to verify, say it again';
+    default:
+      return 'Say "Friday" to command'; // idle (woken from the CLI) or nothing was said
+  }
+}
+
+function renderCommand() {
+  const el = $('command');
+  const spoken = command.text.charAt(0).toUpperCase() + command.text.slice(1);
+  const text = spoken ? `\u201C${spoken}\u201D` : '';
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.toggle('typing', command.phase === 'transcribing' && Boolean(text));
+  document.body.classList.toggle('command-error', command.phase === 'error' || command.phase === 'rejected');
+}
+
+const clip = (text) => (text.length > LOG_ERROR_CHARS ? `${text.slice(0, LOG_ERROR_CHARS)}...` : text);
+
+function onCapture(event) {
+  if (hud.state === 'off' || !command.onCapture(event, performance.now())) return;
+  if (event.state === 'processing') panels.log('Command captured', 'ok', `${event.seconds.toFixed(1)}s`);
+  if (event.state === 'cancelled') panels.log('Command interrupted', 'warn');
+  if (event.state === 'verified') panels.log('Voiceprint match', 'ok', 'CONFIRMED');
+  if (event.state === 'unclear') panels.log('Voiceprint', 'warn', 'INCONCLUSIVE');
+  if (event.state === 'rejected') {
+    if (event.error) panels.log(`Voiceprint: ${clip(event.error)}`, 'err');
+    else panels.log('Voiceprint mismatch', 'err', 'DENIED');
+  }
+  if (event.state === 'empty') {
+    panels.log('No command heard', 'info');
+    hud.wakeAt = performance.now();
+  }
+  renderCommand();
+}
+
+function onTranscript(event) {
+  if (hud.state === 'off' || !command.onTranscript(event, performance.now())) return;
+  if (event.error) {
+    panels.log(`Speech link: ${clip(event.error)}`, 'err');
+  } else if (event.final) {
+    if (command.phase === 'done') {
+      panels.log('Transcript', 'ok', 'RECEIVED');
+      reactor.ping(0.6);
+    } else {
+      panels.log('No command heard', 'info');
+    }
+  }
+  // Give the user the full idle window to read the result.
+  if (!command.busy) hud.wakeAt = performance.now();
+  renderCommand();
 }
 
 function render(scene) {
@@ -246,7 +318,12 @@ function frame(now) {
   const status = statusText();
   if ($('status').textContent !== status) $('status').textContent = status;
 
-  if (hud.state === 'active' && now - Math.max(voice.lastSpeechAt, hud.wakeAt) > IDLE_DISMISS_MS) dismiss();
+  if (command.expire(now)) {
+    panels.log('Speech link timed out', 'err');
+    renderCommand();
+  }
+  if (command.busy) hud.wakeAt = now; // never power down mid-command
+  if (hud.state === 'active' && now > dismissDeadline(command, hud.wakeAt, voice.lastSpeechAt)) dismiss();
 
   const exit = hud.state === 'exit' ? Math.min(1, hud.exitT / EXIT_DURATION_S) : 0;
   reactor.update(dt, hud.time, voice.value);
@@ -289,6 +366,8 @@ bridge.on('hud:stats', (stats) => {
   panels.updateStats(stats);
 });
 bridge.on('hud:status', onStatus);
+bridge.on('hud:capture', onCapture);
+bridge.on('hud:transcript', onTranscript);
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') dismiss();

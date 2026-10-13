@@ -11,6 +11,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const SCRIPT = path.join(ROOT, 'listener', 'wake.py');
 const RESTART_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000];
 const HEALTHY_RUN_MS = 60000;
+const VOICEPRINT_STATES = new Set(['armed', 'unusable', 'off']);
 
 const pythonPath = () => process.env.FRIDAY_PYTHON || path.join(ROOT, '.venv', 'bin', 'python');
 
@@ -65,7 +66,8 @@ class WakeListener extends EventEmitter {
     }
     switch (event.type) {
       case 'ready':
-        this.emit('ready');
+        // voiceprint: 'armed' (enrolled voice only), 'unusable' (every command rejected) or 'off' (any voice).
+        this.emit('ready', { voiceprint: VOICEPRINT_STATES.has(event.voiceprint) ? event.voiceprint : 'off' });
         break;
       case 'wake':
         this.emit('wake', event.conf);
@@ -75,6 +77,10 @@ class WakeListener extends EventEmitter {
         break;
       case 'error':
         this.emit('error', event.message);
+        break;
+      case 'capture':
+      case 'transcript':
+        this.emit(event.type, event);
         break;
       default:
         console.error(`[listener] unknown event: ${line}`);
