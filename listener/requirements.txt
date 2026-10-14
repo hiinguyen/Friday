@@ -5,3 +5,5 @@ kaldi-native-fbank>=1.22.3
 openai>=3.29
 python-dotenv>=1.2
 pytest>=9.1
+# Spoken replies; install torch from the CPU index first (see README), or pip pulls CUDA.
+pocket-tts>=3.3
