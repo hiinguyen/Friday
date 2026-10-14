@@ -250,8 +250,10 @@ const clip = (text) => (text.length > LOG_ERROR_CHARS ? `${text.slice(0, LOG_ERR
 
 function renderReply() {
   const el = $('reply');
-  if (el.textContent !== command.reply) el.textContent = command.reply;
-  el.classList.toggle('typing', command.agent === 'working' && !command.reply);
+  // Hermes may open a reply with blank lines, which pre-wrap would show as empty rows.
+  const text = command.reply.trimStart();
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.toggle('typing', command.agent === 'working' && !text);
 }
 
 function onAgent(event) {

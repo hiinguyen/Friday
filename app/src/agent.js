@@ -31,6 +31,11 @@ const DEFAULT_SESSION = 'friday';
 const DEFAULT_TIMEOUT_S = 120;
 const ERROR_BODY_CHARS = 300;
 const TOOL_LABEL_CHARS = 48;
+// Appended to every command. In a long shared session the agent keeps answering
+// in whatever language dominates the history, so an English command got a
+// Vietnamese reply. A system message does not override that; a note in the
+// user turn itself does, and leaves Vietnamese commands answered in Vietnamese.
+const REPLY_LANGUAGE_NOTE = '[Voice command. Reply in the language this command is spoken in.]';
 
 /** Read FRIDAY_AGENT_* from ROOT/.env without clobbering real environment variables. */
 function loadAgentEnv(file = path.join(ROOT, '.env')) {
@@ -156,7 +161,7 @@ class HermesAgent extends EventEmitter {
     this.controller = controller;
     const current = () => this.controller === controller;
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    const body = JSON.stringify({ model: this.model, stream: true, messages: [{ role: 'user', content: text }] });
+    const body = JSON.stringify({ model: this.model, stream: true, messages: [{ role: 'user', content: `${text}\n\n${REPLY_LANGUAGE_NOTE}` }] });
     this.emit('start', { id });
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/v1/chat/completions`, {
@@ -224,4 +229,4 @@ class HermesAgent extends EventEmitter {
   }
 }
 
-module.exports = { HermesAgent, createSseParser, toolLabel, loadAgentEnv };
+module.exports = { HermesAgent, REPLY_LANGUAGE_NOTE, createSseParser, toolLabel, loadAgentEnv };

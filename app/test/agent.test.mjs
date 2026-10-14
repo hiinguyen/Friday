@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { HermesAgent, createSseParser, toolLabel } = require('../src/agent.js');
+const { HermesAgent, REPLY_LANGUAGE_NOTE, createSseParser, toolLabel } = require('../src/agent.js');
 
 // A Response whose body is the given SSE text, delivered in the given chunks.
 function sseResponse(chunks, init = {}) {
@@ -86,7 +86,7 @@ test('a streamed reply becomes delta, tool and a final done with the full text',
   assert.deepEqual(JSON.parse(seen.init.body), {
     model: 'hermes-agent',
     stream: true,
-    messages: [{ role: 'user', content: 'say hello' }],
+    messages: [{ role: 'user', content: `say hello\n\n${REPLY_LANGUAGE_NOTE}` }],
   });
   assert.deepEqual(events, [
     { name: 'start', id: 7 },
