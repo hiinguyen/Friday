@@ -13,6 +13,8 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
                           +-> listener/command.py (voice check, OpenAI speech-to-text)
                                     +-> listener/vad.py (Silero VAD, offline)
                                     +-> listener/speaker.py (WeSpeaker voiceprint, offline)
+
+agent reply -> app/src (Electron main) --JSON lines--> listener/tts.py (Pocket TTS, offline) -> pw-cat -> speakers
 ```
 
 - `listener/wake.py` decodes 16 kHz audio with a grammar-restricted Vosk model.
@@ -33,18 +35,20 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
 - With a voiceprint enrolled, `listener/speaker.py` checks every command before it is sent: see [Speaker verification](#speaker-verification).
 - `app/src/agent.js` forwards the transcript of every verified command to a remote Hermes Agent API server, if one is configured, and streams the reply onto the HUD: see [Agent bridge](#agent-bridge).
   Nothing is installed locally and the bridge is inert until `FRIDAY_AGENT_URL` and `FRIDAY_AGENT_KEY` are set.
+- `listener/tts.py` reads the reply aloud in a cloned voice as it streams in: see [Spoken replies](#spoken-replies).
 - `app/src/main.js` keeps a hidden transparent window warm, so the HUD appears instantly.
-  It supervises the listener and restarts it with backoff.
+  It supervises the listener and the voice and restarts them with backoff.
 - `app/renderer` draws the HUD.
   Full-screen layers are static CSS animated only through opacity and transform, so the compositor handles them.
   Per-frame canvas work is limited to the reactor's bounding box, which keeps it smooth on integrated GPUs.
 - The HUD powers down 12 s after the last speech or transcript, on Esc, or on a click outside the panels.
-  It never powers down while a command is being recorded or transcribed.
+  It never powers down while a command is being recorded or transcribed, or while the reply is being read aloud.
 
 ## Install
 
 ```sh
-python -m venv .venv && .venv/bin/pip install -r listener/requirements.txt
+python -m venv .venv && .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/pip install -r listener/requirements.txt
 mkdir -p models && curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o /tmp/m.zip && unzip /tmp/m.zip -d models
 curl -L -o models/silero_vad.onnx https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx
 curl -L -o models/wespeaker_en_voxceleb_resnet34_LM.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
@@ -61,11 +65,19 @@ OPENAI_API_KEY=sk-...
 
 `hypr/friday.conf` holds the window rule (fullscreen overlay above bars) and starts the service on login.
 
+For spoken replies, accept the terms of the gated [Pocket TTS](https://huggingface.co/kyutai/pocket-tts) voice cloning weights, log in once and clone a voice (see [Spoken replies](#spoken-replies)):
+
+```sh
+.venv/bin/hf auth login
+bin/friday voice ~/recording-of-the-voice.wav
+```
+
 ## Use
 
 ```sh
 bin/friday wake | hide | toggle      # control the running instance
 bin/friday enroll                    # record your voiceprint (about a minute)
+bin/friday voice FILE                # clone the voice replies are spoken in, from a recording
 systemctl --user restart friday      # restart the service
 journalctl --user -t friday -f       # logs
 ```
@@ -91,6 +103,8 @@ Environment (set with `systemctl --user set-environment`):
 | `FRIDAY_AGENT_MODEL` | `hermes-agent` | Model id to request from the server |
 | `FRIDAY_AGENT_SESSION` | `friday` | `X-Hermes-Session-Id`: commands share one conversation; empty makes each command stateless |
 | `FRIDAY_AGENT_TIMEOUT_S` | `120` | Abandon a run after this many seconds |
+| `FRIDAY_TTS` | on | `off` keeps replies silent and frees the voice model's memory |
+| `FRIDAY_TTS_VOICE` | `models/tts-voice.safetensors` | Voice exported by `bin/friday voice`; without the file replies are silent |
 
 ## Agent bridge
 
@@ -131,6 +145,24 @@ the wake word and transcription keep working exactly as before.
 or an SSH tunnel rather than plain HTTP, and restrict what the agent may do **on the server** — a
 dedicated Hermes profile with a narrow toolset, exposed under `/p/<profile>/` with its own key — not
 by trusting the client. Friday's voiceprint still decides whose speech is uploaded.
+
+## Spoken replies
+
+The agent's reply is read aloud in a cloned voice with [Kyutai Pocket TTS](https://github.com/kyutai-labs/pocket-tts), offline on the CPU.
+`listener/tts.py` keeps the model loaded and receives the reply from the Electron shell as it streams in.
+It speaks one sentence at a time, so the first words play while the agent is still writing the rest.
+Markdown, links and code blocks are left out; Vietnamese sentences are shown but not spoken, since the voice is English only.
+Saying "Friday" again stops her at once, and so does dismissing the HUD.
+
+`bin/friday voice FILE` clones a voice from a recording in any format ffmpeg reads.
+Use one clear voice without music or effects, ideally 10 to 30 s of it.
+Pocket TTS conditions on at most 30 s and continues from where the sample stops, so the recording is cut at the last pause before 30 s rather than mid-word.
+The trimmed sample is kept next to the voice as `models/tts-voice.wav`, to export it again after a model update.
+`models/` is git-ignored: a voice cloned from someone else's recording stays on this machine.
+
+Measured on the Ryzen 9 8945HX: about 1 GB of RAM while loaded, first audio about 240 ms after a sentence is complete, and audio generated about 1.4 times faster than it plays, on one to two CPU cores.
+Pocket TTS runs one thread; more threads made it slower here.
+Set `FRIDAY_TTS=off` to give the memory back.
 
 ## Speaker verification
 
