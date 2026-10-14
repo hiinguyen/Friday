@@ -11,6 +11,9 @@ export const COMMAND_WATCHDOG_MS = 60000;
 // An agent run is longer: the remote Hermes may think and call tools for a
 // while, and the bridge only streams a line when something changes.
 export const AGENT_WATCHDOG_MS = 150000;
+// Speaking a reply sends no progress until it ends; a lost 'done' (the voice
+// worker crashed) must still not hold the HUD up forever.
+export const SPEECH_WATCHDOG_MS = 300000;
 export const IDLE_DISMISS_MS = 12000;
 export const REJECTED_DISMISS_MS = 3500; // someone else said "Friday": power down soon
 
@@ -46,12 +49,18 @@ export class CommandTracker {
     this.agent = 'idle';
     this.tool = '';
     this.reply = '';
+    this.speaking = false; // the reply is being read aloud
     this.updatedAt = 0;
   }
 
-  /** True while the HUD must stay up: recording, transcribing, or waiting on the agent. */
-  get busy() {
+  /** True while recording, transcribing, or waiting on the agent: work that can time out. */
+  get working() {
     return this.phase === 'listening' || this.phase === 'transcribing' || this.agent === 'working';
+  }
+
+  /** True while the HUD must stay up: working, or reading the reply aloud. */
+  get busy() {
+    return this.working || this.speaking;
   }
 
   /** Returns false (and changes nothing) for events of an older capture. */
@@ -99,7 +108,8 @@ export class CommandTracker {
 
   /** Fail a command that made no progress for its watchdog; true if it just expired. */
   expire(now) {
-    if (!this.busy) return false;
+    if (this.speaking && now - this.updatedAt > SPEECH_WATCHDOG_MS) this.speaking = false;
+    if (!this.working) return false;
     const window = this.agent === 'working' ? AGENT_WATCHDOG_MS : COMMAND_WATCHDOG_MS;
     if (now - this.updatedAt <= window) return false;
     this.phase = 'error';
@@ -122,6 +132,15 @@ export class CommandTracker {
       this.agent = state;
       if (state === 'working' && tool) this.tool = tool;
     }
+    return true;
+  }
+
+  /** The reply being read aloud: 'speaking', then 'done' (also when cut short); 'skipped' is not English. */
+  onSpeech({ id, state }, now = 0) {
+    if (!this.accept(id)) return false;
+    this.updatedAt = now;
+    if (state === 'speaking') this.speaking = true;
+    else if (state === 'done') this.speaking = false;
     return true;
   }
 

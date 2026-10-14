@@ -4,6 +4,7 @@ import {
   CommandTracker,
   IDLE_DISMISS_MS,
   REJECTED_DISMISS_MS,
+  SPEECH_WATCHDOG_MS,
   dismissDeadline,
   stripWakePhrase,
 } from '../renderer/hud/command.js';
@@ -197,4 +198,55 @@ test('agent events of an older capture are ignored', () => {
   assert.equal(t.onAgent({ id: 4, state: 'working' }), false);
   assert.equal(t.onReply({ id: 4, delta: 'stale' }), false);
   assert.equal(t.reply, '');
+});
+
+function answered() {
+  const t = new CommandTracker();
+  t.onCapture({ id: 1, state: 'listening' }, 0);
+  t.onTranscript({ id: 1, text: 'what time is it', final: true }, 1000);
+  t.onAgent({ id: 1, state: 'working' }, 2000);
+  t.onReply({ id: 1, text: 'It is noon.', final: true }, 3000);
+  return t;
+}
+
+test('reading the reply aloud keeps the HUD up until she finishes', () => {
+  const t = answered();
+  assert.ok(!t.busy);
+  t.onSpeech({ id: 1, state: 'speaking' }, 3100);
+  assert.ok(t.speaking);
+  assert.ok(t.busy, 'the HUD must not power down mid-sentence');
+  t.onSpeech({ id: 1, state: 'done' }, 9000);
+  assert.ok(!t.speaking);
+  assert.ok(!t.busy);
+});
+
+test('a long reply read aloud is not mistaken for a stuck command', () => {
+  const t = answered();
+  t.onSpeech({ id: 1, state: 'speaking' }, 3100);
+  assert.equal(t.expire(3100 + 120000), false);
+  assert.equal(t.phase, 'done');
+  assert.equal(t.agent, 'done');
+  assert.ok(t.speaking);
+});
+
+test('a lost end of speech stops holding the HUD up after its watchdog', () => {
+  const t = answered();
+  t.onSpeech({ id: 1, state: 'speaking' }, 3100);
+  t.expire(3100 + SPEECH_WATCHDOG_MS + 1);
+  assert.ok(!t.speaking);
+  assert.ok(!t.busy);
+  assert.equal(t.error, '', 'speech timing out is not a command error');
+});
+
+test('a reply that is not English is shown but never marks her as speaking', () => {
+  const t = answered();
+  assert.equal(t.onSpeech({ id: 1, state: 'skipped' }, 3100), true);
+  assert.ok(!t.speaking);
+});
+
+test('speech of an older command is ignored', () => {
+  const t = answered();
+  t.onCapture({ id: 2, state: 'listening' }, 4000);
+  assert.equal(t.onSpeech({ id: 1, state: 'speaking' }, 4100), false);
+  assert.ok(!t.speaking);
 });

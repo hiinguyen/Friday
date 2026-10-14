@@ -217,6 +217,7 @@ function finishExit() {
 function statusText() {
   if (listenerStatus.listener === 'error') return 'Microphone offline';
   if (hud.state === 'exit') return 'Standing by';
+  if (command.speaking) return 'Speaking';
   if (command.agent === 'working') return command.tool ? `Running ${command.tool}` : 'Working';
   switch (command.phase) {
     case 'listening':
@@ -268,6 +269,13 @@ function onReply(event) {
   if (event.final) reactor.ping(0.5);
   hud.wakeAt = performance.now();
   renderReply();
+}
+
+function onSpeech(event) {
+  if (hud.state === 'off' || !command.onSpeech(event, performance.now())) return;
+  if (event.state === 'skipped') panels.log('Voice', 'warn', 'ENGLISH ONLY');
+  // Give the user the full idle window after she stops talking.
+  if (event.state === 'done') hud.wakeAt = performance.now();
 }
 
 function onCapture(event) {
@@ -396,6 +404,7 @@ bridge.on('hud:capture', onCapture);
 bridge.on('hud:transcript', onTranscript);
 bridge.on('hud:agent', onAgent);
 bridge.on('hud:reply', onReply);
+bridge.on('hud:speech', onSpeech);
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') dismiss();
