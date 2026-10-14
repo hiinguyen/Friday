@@ -39,6 +39,7 @@ from typing import BinaryIO
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
 from command import PREROLL_BYTES, CommandSession, build_transcriber
+from env import load_env
 from speaker import UnusableVerifier, build_verifier, voiceprint_path
 from vad import VadUnavailable, default_vad
 
@@ -390,6 +391,7 @@ def run_mic(detector: WakeDetector, session: CommandSession, explicit_target: st
 
 
 def main() -> None:
+    load_env()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--wav", type=Path, help="process a 16 kHz mono WAV file instead of the mic")
     parser.add_argument("--model", type=Path, default=Path(os.environ.get("FRIDAY_MODEL", DEFAULT_MODEL)))

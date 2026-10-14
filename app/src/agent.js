@@ -5,9 +5,9 @@
 // reply back as events for the HUD. Nothing is installed locally: the server on
 // the other machine runs the agent, this process only speaks HTTPS to it.
 //
-// Configured from the environment (FRIDAY_AGENT_* from ROOT/.env are read too,
-// without overriding real environment variables). With no URL or key the bridge
-// is disabled and Friday behaves exactly as before, showing only the transcript.
+// Configured from the environment, which main.js fills from ROOT/.env. With no
+// URL or key the bridge is disabled and Friday behaves exactly as before,
+// showing only the transcript.
 //
 //   FRIDAY_AGENT_URL        base URL, e.g. https://hermes.example.com (or http://host:8642)
 //   FRIDAY_AGENT_KEY        bearer token: the server's API_SERVER_KEY
@@ -25,10 +25,6 @@
 // side (a dedicated profile) rather than trusting the client to do it.
 
 const { EventEmitter } = require('node:events');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_MODEL = 'hermes-agent';
 const DEFAULT_SESSION = 'friday';
 const DEFAULT_TIMEOUT_S = 120;
@@ -40,21 +36,6 @@ const TOOL_LABEL_CHARS = 48;
 // Vietnamese reply. A system message does not override that; a note in the
 // user turn itself does, and leaves Vietnamese commands answered in Vietnamese.
 const REPLY_LANGUAGE_NOTE = '[Voice command. Reply in the language this command is spoken in.]';
-
-/** Read FRIDAY_AGENT_* from ROOT/.env without clobbering real environment variables. */
-function loadAgentEnv(file = path.join(ROOT, '.env')) {
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch {
-    return; // no .env is fine: the environment may carry everything
-  }
-  for (const line of text.split('\n')) {
-    const match = /^\s*(FRIDAY_AGENT_[A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
-  }
-}
 
 function positiveSeconds(value, fallback) {
   const seconds = Number.parseFloat(value);
@@ -119,7 +100,6 @@ function toolLabel(payload) {
 class HermesAgent extends EventEmitter {
   constructor(options = {}) {
     super();
-    loadAgentEnv();
     this.baseUrl = String(options.baseUrl ?? process.env.FRIDAY_AGENT_URL ?? '').replace(/\/+$/, '');
     this.key = options.key ?? process.env.FRIDAY_AGENT_KEY ?? '';
     this.model = options.model ?? process.env.FRIDAY_AGENT_MODEL ?? DEFAULT_MODEL;
@@ -235,4 +215,4 @@ class HermesAgent extends EventEmitter {
   }
 }
 
-module.exports = { HermesAgent, REPLY_LANGUAGE_NOTE, createSseParser, toolLabel, loadAgentEnv };
+module.exports = { HermesAgent, REPLY_LANGUAGE_NOTE, createSseParser, toolLabel };

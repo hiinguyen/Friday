@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import command
+from env import ENV_FILE, load_env
 from speaker import Verdict, VoiceprintError
 from test_vad import TESTDATA, load_clip, needs_vad
 
@@ -452,6 +453,7 @@ class TestCommandSession:
 @live_api
 @needs_tts
 def test_live_openai_transcription(tmp_path: Path) -> None:
+    load_env(ENV_FILE)  # the real key, which conftest keeps out of the other tests
     transcriber = command.build_transcriber()
     assert transcriber is not None, "OPENAI_API_KEY missing"
     deltas: list[str] = []

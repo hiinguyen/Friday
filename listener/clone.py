@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
+from env import load_env
 from tts import voice_path
 
 SAMPLE_RATE = 24000  # Pocket TTS (Mimi) rate
@@ -114,6 +115,7 @@ def restart_service(out: Path) -> None:
 
 
 def main() -> None:
+    load_env()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("audio", type=Path, help="recording of the voice to clone")
     parser.add_argument("--out", type=Path, default=voice_path(), help="voice file (default: %(default)s)")

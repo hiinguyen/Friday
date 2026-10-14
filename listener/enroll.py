@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from command import SAMPLE_RATE, Endpointer, save_private_wav, voiced_audio
+from env import load_env
 from speaker import (
     DEFAULT_SPEAKER_MODEL,
     SpeakerModel,
@@ -190,6 +191,7 @@ def reload_service(saved: Path) -> None:
 
 
 def main() -> None:
+    load_env()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--wav", type=Path, nargs="+", help="enroll from 16 kHz mono WAV recordings")
     parser.add_argument("--out", type=Path, default=voiceprint_path(), help="voiceprint file")

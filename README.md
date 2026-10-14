@@ -82,7 +82,9 @@ systemctl --user restart friday      # restart the service
 journalctl --user -t friday -f       # logs
 ```
 
-Environment (set with `systemctl --user set-environment`):
+Settings live in the root `.env` (start from `cp .env.example .env && chmod 600 .env`).
+The service, `bin/friday enroll` and `bin/friday voice` all read it, a variable already set in the
+real environment wins over it, and `systemctl --user restart friday` applies a change:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -90,6 +92,7 @@ Environment (set with `systemctl --user set-environment`):
 | `FRIDAY_MIN_CONF` | `0.6` | Minimum Vosk word confidence |
 | `FRIDAY_MODEL` | `models/vosk-model-small-en-us-0.15` | Vosk model directory |
 | `FRIDAY_DEBUG` | unset | `1` logs steady-state fps after each wake |
+| `FRIDAY_PYTHON` | `.venv/bin/python` | Python that runs the listener helpers |
 | `OPENAI_API_KEY` | from `.env` | Without it the HUD reports that commands cannot be transcribed |
 | `FRIDAY_STT_MODEL` | `gpt-transcribe` | OpenAI transcription model |
 | `FRIDAY_STT_LANGUAGE` | `vi` | Language hint (ISO 639-1), or `auto`; English commands still transcribe correctly with `vi` |

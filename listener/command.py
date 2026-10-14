@@ -202,10 +202,9 @@ class Transcriber:
 
 
 def build_transcriber() -> Transcriber | None:
-    """OpenAI transcriber from the environment (and ROOT/.env), or None if unavailable."""
+    """OpenAI transcriber from the environment, or None if unavailable."""
     try:
         import httpx2
-        from dotenv import load_dotenv
         from openai import DefaultHttpx2Client, OpenAI
 
         from network import FallbackTransport, default_routes, uses_proxy
@@ -214,7 +213,6 @@ def build_transcriber() -> Transcriber | None:
         sys.stderr.write(f"voice commands disabled: {exc}\n")
         return None
 
-    load_dotenv(ROOT / ".env", override=False)
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         return None

@@ -8,6 +8,8 @@
 
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
+// Before anything reads its settings: every module below may.
+require('./env').loadEnvFile();
 const { HermesAgent } = require('./agent');
 const { Conversation, isResetCommand } = require('./conversation');
 const { WakeListener } = require('./listener');

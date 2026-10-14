@@ -36,6 +36,8 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Protocol
 
+from env import load_env
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VOICE = ROOT / "models" / "tts-voice.safetensors"
 OFF_VALUES = {"0", "off", "false", "no"}
@@ -431,6 +433,7 @@ def serve(speaker: Speaker, lines: Iterator[str]) -> None:
 
 
 def main() -> None:
+    load_env()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--say", help="speak this text and exit")
     parser.add_argument("--voice", type=Path, default=voice_path(), help="voice exported by 'friday voice'")
