@@ -101,7 +101,8 @@ Environment (set with `systemctl --user set-environment`):
 | `FRIDAY_AGENT_URL` | unset | Base URL of a remote Hermes Agent API server; unset disables the bridge (Friday only shows the transcript) |
 | `FRIDAY_AGENT_KEY` | unset | Bearer token, the server's `API_SERVER_KEY` |
 | `FRIDAY_AGENT_MODEL` | `hermes-agent` | Model id to request from the server |
-| `FRIDAY_AGENT_SESSION` | `friday` | `X-Hermes-Session-Id`: commands share one conversation; empty makes each command stateless |
+| `FRIDAY_AGENT_SESSION` | `friday` | Prefix of the `X-Hermes-Session-Id` (`friday-20261014-203105`); empty makes each command stateless |
+| `FRIDAY_AGENT_SESSION_IDLE_S` | `600` | A pause longer than this after the last reply starts a new conversation |
 | `FRIDAY_AGENT_TIMEOUT_S` | `120` | Abandon a run after this many seconds |
 | `FRIDAY_TTS` | on | `off` keeps replies silent and frees the voice model's memory |
 | `FRIDAY_TTS_VOICE` | `models/tts-voice.safetensors` | Voice exported by `bin/friday voice`; without the file replies are silent |
@@ -134,9 +135,18 @@ FRIDAY_AGENT_URL=https://hermes.example.com
 FRIDAY_AGENT_KEY=<the same secret>
 ```
 
-A whole run stays on one conversation through `FRIDAY_AGENT_SESSION`, so "Friday, what's in this
-folder" can be followed by "Friday, open the second one"; set it empty to treat every command on
-its own. While the agent is thinking or calling tools the HUD stays up, and a new wake abandons the
+Commands that come close together share one conversation, so "Friday, what's in this folder" can
+be followed by "Friday, open the second one".
+A pause longer than `FRIDAY_AGENT_SESSION_IDLE_S` after the last reply starts a new one, so an
+unrelated question hours later does not drag old context (or its language) along; the HUD log says
+`NEW CONVERSATION` or `CONTINUING` for each command.
+Say "Friday, new conversation" (or "start over", "cuộc trò chuyện mới", "bắt đầu lại") to start one
+right away; that command is answered locally and never sent to the agent.
+The current session survives a restart (`conversation.json` in Electron's user data folder), and
+remembering things across conversations is left to the agent's own memory.
+Set `FRIDAY_AGENT_SESSION` empty to treat every command on its own.
+
+While the agent is thinking or calling tools the HUD stays up, and a new wake abandons the
 run in flight. If the server is unreachable the command is still shown and the reason is logged;
 the wake word and transcription keep working exactly as before.
 

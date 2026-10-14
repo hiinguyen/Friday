@@ -9,6 +9,7 @@
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const { HermesAgent } = require('./agent');
+const { Conversation, isResetCommand } = require('./conversation');
 const { WakeListener } = require('./listener');
 const { SpeechOutput } = require('./speech');
 const { createSampler } = require('./stats');
@@ -16,6 +17,7 @@ const { createSampler } = require('./stats');
 const WINDOW_TITLE = 'F.R.I.D.A.Y.';
 const STATS_INTERVAL_MS = 1000;
 const COMMANDS = new Set(['wake', 'hide', 'toggle']);
+const NEW_CONVERSATION_REPLY = 'Starting a new conversation.';
 // FRIDAY_DEBUG=1 makes the renderer log steady-state fps after each wake.
 const DEBUG = process.env.FRIDAY_DEBUG === '1';
 
@@ -49,7 +51,9 @@ const sampleStats = createSampler();
 const listener = new WakeListener();
 const agent = new HermesAgent();
 const speech = new SpeechOutput();
+let conversation = null; // created once app paths are known
 let agentRun = 0; // id of the latest agent run
+let runFresh = false; // whether the latest run opened a new conversation
 let dismissedRun = 0; // a run whose HUD was dismissed: whatever it still says stays silent
 
 function send(channel, payload) {
@@ -162,6 +166,24 @@ function runCommand(command) {
   else if (command === 'toggle') (visible ? hideHud() : showHud(1));
 }
 
+function askAgent(id, text) {
+  const { session, fresh } = conversation.begin();
+  runFresh = fresh;
+  agent.ask(id, text, session);
+}
+
+/** "Friday, new conversation": answered here, never sent to the agent. */
+function startNewConversation(id) {
+  conversation.reset();
+  log(`command #${id}: new conversation`);
+  agentRun = id;
+  dismissedRun = 0;
+  send('hud:reply', { id, text: NEW_CONVERSATION_REPLY, final: true });
+  send('hud:agent', { id, state: 'done', session: 'reset' });
+  speech.say(id, NEW_CONVERSATION_REPLY);
+  speech.end(id);
+}
+
 function setListenerStatus(status) {
   listenerStatus = { ...listenerStatus, ...status };
   send('hud:status', listenerStatus);
@@ -204,7 +226,9 @@ app.whenReady().then(() => {
     if (event.error) console.error(`[friday] transcription #${event.id} failed: ${event.error}`);
     send('hud:transcript', event);
     // The wake word alone or an empty transcript is not a command: nothing to run.
-    if (event.final && event.text) agent.ask(event.id, event.text);
+    if (!event.final || !event.text || !agent.enabled) return;
+    if (isResetCommand(event.text)) startNewConversation(event.id);
+    else askAgent(event.id, event.text);
   });
   listener.on('error', (message) => {
     console.error(`[friday] ${message}`);
@@ -214,8 +238,9 @@ app.whenReady().then(() => {
   agent.on('start', (a) => {
     agentRun = a.id;
     dismissedRun = 0; // a new run: ids restart with the listener, so never match an old one
-    log(`agent #${a.id}: working`);
-    send('hud:agent', { id: a.id, state: 'working' });
+    const session = runFresh ? 'new' : 'continued';
+    log(`agent #${a.id}: working (${session} conversation)`);
+    send('hud:agent', { id: a.id, state: 'working', session });
   });
   agent.on('tool', (a) => {
     log(`agent #${a.id}: ${a.label}`);
@@ -230,11 +255,13 @@ app.whenReady().then(() => {
     send('hud:reply', { id: a.id, text: a.text, final: true });
     send('hud:agent', { id: a.id, state: 'done' });
     speech.end(a.id);
+    conversation.touch();
   });
   agent.on('error', (a) => {
     console.error(`[friday] agent #${a.id} failed: ${a.message}`);
     send('hud:agent', { id: a.id, state: 'error', error: a.message });
     speech.end(a.id); // finish the sentence it was on, if any
+    conversation.touch();
   });
 
   speech.on('ready', ({ voice }) => log(`voice ready: ${voice}`));
@@ -245,8 +272,16 @@ app.whenReady().then(() => {
   });
   speech.on('error', (message) => console.error(`[friday] voice: ${message}`));
 
+  conversation = new Conversation({
+    prefix: agent.session,
+    idleMs: agent.sessionIdleMs,
+    file: path.join(app.getPath('userData'), 'conversation.json'),
+    onError: (message) => console.error(`[friday] ${message}`),
+  });
   if (agent.enabled) {
-    const session = agent.session ? `, session ${agent.session}` : '';
+    const session = agent.session
+      ? `, sessions ${agent.session}-*, new after ${agent.sessionIdleMs / 1000}s idle`
+      : ', stateless';
     log(`agent bridge: ${agent.baseUrl} (model ${agent.model}${session})`);
   } else {
     log('agent bridge: disabled (set FRIDAY_AGENT_URL and FRIDAY_AGENT_KEY)');

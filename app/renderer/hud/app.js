@@ -258,6 +258,9 @@ function renderReply() {
 
 function onAgent(event) {
   if (hud.state === 'off' || !command.onAgent(event, performance.now())) return;
+  if (event.session === 'new') panels.log('Hermes link', 'info', 'NEW CONVERSATION');
+  if (event.session === 'continued') panels.log('Hermes link', 'info', 'CONTINUING');
+  if (event.session === 'reset') panels.log('Conversation reset', 'ok');
   if (event.tool) panels.log(`Hermes: ${clip(event.tool)}`, 'info');
   if (event.state === 'error') panels.log(`Hermes: ${clip(event.error || 'failed')}`, 'err');
   // Progress keeps the HUD awake for as long as the agent works.

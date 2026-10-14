@@ -145,3 +145,26 @@ test('a newer command cancels the run in flight', async () => {
   assert.equal(signals[1].aborted, false, 'the second run is live');
   agent.close();
 });
+
+test('a per-command session overrides the configured one', async () => {
+  let headers;
+  const agent = new HermesAgent({
+    baseUrl: 'http://h',
+    key: 'k',
+    session: 'friday',
+    fetchImpl: (_url, init) => {
+      headers = init.headers;
+      return Promise.resolve(sseResponse(['data: [DONE]\n\n']));
+    },
+  });
+  await agent.ask(1, 'hi', 'friday-20261014-203105');
+  assert.equal(headers['X-Hermes-Session-Id'], 'friday-20261014-203105');
+  await agent.ask(2, 'hi', '');
+  assert.equal('X-Hermes-Session-Id' in headers, false, 'an empty session is stateless');
+});
+
+test('the idle window comes from FRIDAY_AGENT_SESSION_IDLE_S, defaulting to ten minutes', () => {
+  assert.equal(new HermesAgent({ baseUrl: '', key: '' }).sessionIdleMs, 600_000);
+  assert.equal(new HermesAgent({ baseUrl: '', key: '', sessionIdleSeconds: '90' }).sessionIdleMs, 90_000);
+  assert.equal(new HermesAgent({ baseUrl: '', key: '', sessionIdleSeconds: 'nope' }).sessionIdleMs, 600_000);
+});

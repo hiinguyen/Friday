@@ -12,8 +12,11 @@
 //   FRIDAY_AGENT_URL        base URL, e.g. https://hermes.example.com (or http://host:8642)
 //   FRIDAY_AGENT_KEY        bearer token: the server's API_SERVER_KEY
 //   FRIDAY_AGENT_MODEL      model id to request (default hermes-agent)
-//   FRIDAY_AGENT_SESSION    X-Hermes-Session-Id for multi-turn continuity (default
-//                           friday; set to an empty value for one-shot, stateless runs)
+//   FRIDAY_AGENT_SESSION    prefix of the X-Hermes-Session-Id; commands close together
+//                           share one session (see conversation.js). Default friday;
+//                           set to an empty value for one-shot, stateless runs
+//   FRIDAY_AGENT_SESSION_IDLE_S  a pause longer than this starts a new conversation
+//                           (default 600)
 //   FRIDAY_AGENT_TIMEOUT_S  hard ceiling for a single run in seconds (default 120)
 //
 // Security: the API server exposes the agent's full toolset, so the bearer key
@@ -29,6 +32,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_MODEL = 'hermes-agent';
 const DEFAULT_SESSION = 'friday';
 const DEFAULT_TIMEOUT_S = 120;
+const DEFAULT_SESSION_IDLE_S = 600;
 const ERROR_BODY_CHARS = 300;
 const TOOL_LABEL_CHARS = 48;
 // Appended to every command. In a long shared session the agent keeps answering
@@ -120,6 +124,8 @@ class HermesAgent extends EventEmitter {
     this.key = options.key ?? process.env.FRIDAY_AGENT_KEY ?? '';
     this.model = options.model ?? process.env.FRIDAY_AGENT_MODEL ?? DEFAULT_MODEL;
     this.session = options.session ?? process.env.FRIDAY_AGENT_SESSION ?? DEFAULT_SESSION;
+    this.sessionIdleMs =
+      positiveSeconds(options.sessionIdleSeconds ?? process.env.FRIDAY_AGENT_SESSION_IDLE_S, DEFAULT_SESSION_IDLE_S) * 1000;
     this.timeoutMs = positiveSeconds(options.timeoutSeconds ?? process.env.FRIDAY_AGENT_TIMEOUT_S, DEFAULT_TIMEOUT_S) * 1000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.controller = null;
@@ -139,22 +145,22 @@ class HermesAgent extends EventEmitter {
     this.cancel();
   }
 
-  headers() {
+  headers(session) {
     const headers = {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
       Authorization: `Bearer ${this.key}`,
     };
-    if (this.session) headers['X-Hermes-Session-Id'] = this.session;
+    if (session) headers['X-Hermes-Session-Id'] = session;
     return headers;
   }
 
   /**
-   * Send one voice command as a single user turn and stream the reply.
-   * Emits: start {id}, delta {id, text}, tool {id, label}, done {id, text},
+   * Send one voice command as a single user turn of `session` (empty: a
+   * stateless run) and stream the reply. Emits: start {id}, delta {id, text}, tool {id, label}, done {id, text},
    * error {id, message}. A newer ask() cancels the previous one silently.
    */
-  async ask(id, text) {
+  async ask(id, text, session = this.session) {
     if (!this.enabled || !text) return;
     this.cancel();
     const controller = new AbortController();
@@ -166,7 +172,7 @@ class HermesAgent extends EventEmitter {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
-        headers: this.headers(),
+        headers: this.headers(session),
         body,
         signal: controller.signal,
       });
