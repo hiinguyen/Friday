@@ -5,9 +5,13 @@
 #   friday hide       dismiss the HUD
 #   friday toggle     toggle the HUD
 #   friday enroll     record your voiceprint so only your voice is obeyed
+#   friday voice F    clone the voice Friday replies in from recording F
 set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 if [[ "${1:-}" == enroll ]]; then
   exec "$ROOT/.venv/bin/python" "$ROOT/listener/enroll.py" "${@:2}"
+fi
+if [[ "${1:-}" == voice ]]; then
+  exec "$ROOT/.venv/bin/python" "$ROOT/listener/clone.py" "${@:2}"
 fi
 exec "$ROOT/app/node_modules/electron/dist/electron" "$ROOT/app" --ozone-platform=wayland "$@"
