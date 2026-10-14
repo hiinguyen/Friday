@@ -10,6 +10,7 @@ const path = require('node:path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const { HermesAgent } = require('./agent');
 const { WakeListener } = require('./listener');
+const { SpeechOutput } = require('./speech');
 const { createSampler } = require('./stats');
 
 const WINDOW_TITLE = 'F.R.I.D.A.Y.';
@@ -47,6 +48,9 @@ const VOICEPRINT_LOG = { armed: 'enrolled voice only', unusable: 'voiceprint unu
 const sampleStats = createSampler();
 const listener = new WakeListener();
 const agent = new HermesAgent();
+const speech = new SpeechOutput();
+let agentRun = 0; // id of the latest agent run
+let dismissedRun = 0; // a run whose HUD was dismissed: whatever it still says stays silent
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -145,6 +149,10 @@ function hideHud() {
 
 function onHudHidden(_event, seq) {
   if (seq !== wakeSeq) return; // stale: a newer wake already rebooted the HUD
+  // Dismissed (Esc, a click, or idle): the run is abandoned and she stops talking.
+  dismissedRun = agentRun;
+  agent.cancel();
+  speech.cancel();
   markHidden();
 }
 
@@ -175,6 +183,7 @@ app.whenReady().then(() => {
   listener.on('wake', (conf) => {
     log(`wake word detected (conf=${conf})`);
     agent.cancel(); // a new command abandons whatever the last one was still doing
+    speech.cancel(); // and she stops talking to listen
     showHud(conf);
   });
   listener.on('level', (value) => {
@@ -203,6 +212,8 @@ app.whenReady().then(() => {
   });
 
   agent.on('start', (a) => {
+    agentRun = a.id;
+    dismissedRun = 0; // a new run: ids restart with the listener, so never match an old one
     log(`agent #${a.id}: working`);
     send('hud:agent', { id: a.id, state: 'working' });
   });
@@ -210,16 +221,29 @@ app.whenReady().then(() => {
     log(`agent #${a.id}: ${a.label}`);
     send('hud:agent', { id: a.id, state: 'working', tool: a.label });
   });
-  agent.on('delta', (a) => send('hud:reply', { id: a.id, delta: a.text }));
+  agent.on('delta', (a) => {
+    send('hud:reply', { id: a.id, delta: a.text });
+    if (a.id !== dismissedRun) speech.say(a.id, a.text); // spoken sentence by sentence while the rest streams in
+  });
   agent.on('done', (a) => {
     log(`agent #${a.id}: replied ${a.text.length} chars`);
     send('hud:reply', { id: a.id, text: a.text, final: true });
     send('hud:agent', { id: a.id, state: 'done' });
+    speech.end(a.id);
   });
   agent.on('error', (a) => {
     console.error(`[friday] agent #${a.id} failed: ${a.message}`);
     send('hud:agent', { id: a.id, state: 'error', error: a.message });
+    speech.end(a.id); // finish the sentence it was on, if any
   });
+
+  speech.on('ready', ({ voice }) => log(`voice ready: ${voice}`));
+  speech.on('disabled', (reason) => log(`voice: off (${reason})`));
+  speech.on('speech', (s) => {
+    if (s.state === 'skipped') log(`reply #${s.id}: not English, shown but not spoken`);
+    send('hud:speech', s);
+  });
+  speech.on('error', (message) => console.error(`[friday] voice: ${message}`));
 
   if (agent.enabled) {
     const session = agent.session ? `, session ${agent.session}` : '';
@@ -231,12 +255,14 @@ app.whenReady().then(() => {
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
   listener.start();
+  speech.start();
 });
 
 app.on('window-all-closed', (event) => event.preventDefault());
 app.on('before-quit', () => {
   listener.stop();
   agent.close();
+  speech.stop();
 });
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => app.quit());
