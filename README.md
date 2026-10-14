@@ -152,8 +152,8 @@ the wake word and transcription keep working exactly as before.
 
 **Security.** The API server gives the bearer token the agent's *full* toolset, terminal included
 (the server's own docs say so). Keep the token in the 0600 root `.env`, reach the server over HTTPS
-or an SSH tunnel rather than plain HTTP, and restrict what the agent may do **on the server** — a
-dedicated Hermes profile with a narrow toolset, exposed under `/p/<profile>/` with its own key — not
+or an SSH tunnel rather than plain HTTP, and restrict what the agent may do **on the server** - a
+dedicated Hermes profile with a narrow toolset, exposed under `/p/<profile>/` with its own key - not
 by trusting the client. Friday's voiceprint still decides whose speech is uploaded.
 
 ## Spoken replies
