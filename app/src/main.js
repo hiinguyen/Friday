@@ -322,6 +322,8 @@ app.whenReady().then(() => {
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
   badge.create();
+  // SUPER+ALT+G while Friday was not running started this instance: do what it asked.
+  if (initialCommand === 'gesture') gestures.enable();
   listener.start();
   speech.start();
 });
