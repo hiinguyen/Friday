@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:"
+    />
+    <title>F.R.I.D.A.Y. gesture debug</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="gesture-debug/debug.css" />
+    <script type="module" src="gesture-debug/debug.js"></script>
+  </head>
+  <body data-mode="off" data-carrying="false" data-live="false">
+    <main class="panel">
+      <div class="view">
+        <canvas></canvas>
+        <div class="waiting">CAMERA STARTING</div>
+        <div class="count" aria-hidden="true"></div>
+        <div class="progress" aria-hidden="true"><span></span></div>
+      </div>
+      <footer role="status" aria-live="polite">
+        <span class="hand">CAMERA</span>
+        <span class="ws"></span>
+      </footer>
+    </main>
+  </body>
+</html>

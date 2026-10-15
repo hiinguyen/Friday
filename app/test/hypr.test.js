@@ -6,7 +6,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
-const { activeWorkspace, dispatch, request, socketPath } = require('../src/hypr');
+const { activeWorkspace, dispatch, keyword, request, socketPath } = require('../src/hypr');
 
 // A stand-in for Hyprland's request socket: records each request and answers
 // with `reply`, then closes, as Hyprland does. A null reply never answers.
@@ -49,6 +49,25 @@ test('a refused dispatch rejects with what Hyprland said', async () => {
   const hypr = await fakeHyprland('Invalid dispatcher');
   try {
     await assert.rejects(dispatch('bogus x', { socket: hypr.socket }), /Invalid dispatcher/);
+  } finally {
+    await hypr.close();
+  }
+});
+
+test('a keyword sets the option and resolves on ok', async () => {
+  const hypr = await fakeHyprland('ok');
+  try {
+    await keyword('cursor:zoom_factor', 1.5, { socket: hypr.socket });
+    assert.deepEqual(hypr.received, ['keyword cursor:zoom_factor 1.5']);
+  } finally {
+    await hypr.close();
+  }
+});
+
+test('a refused keyword rejects with what Hyprland said', async () => {
+  const hypr = await fakeHyprland('config option <cursor:zoom> does not exist.');
+  try {
+    await assert.rejects(keyword('cursor:zoom', 2, { socket: hypr.socket }), /does not exist/);
   } finally {
     await hypr.close();
   }

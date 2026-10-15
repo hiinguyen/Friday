@@ -15,6 +15,8 @@ const INBOUND = [
   'hud:speech',
   'badge:state',
   'badge:action',
+  'gesture-debug:state',
+  'gesture-debug:frame',
 ];
 
 contextBridge.exposeInMainWorld('friday', {

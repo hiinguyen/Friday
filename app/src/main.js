@@ -14,6 +14,7 @@ const { HermesAgent } = require('./agent');
 const { Badge } = require('./badge');
 const { Conversation } = require('./conversation');
 const { CommandDispatcher } = require('./dispatch');
+const { GestureDebug } = require('./gesture-debug');
 const { GestureControl } = require('./gestures');
 const { HandWorker } = require('./hands');
 const hypr = require('./hypr');
@@ -63,7 +64,9 @@ const agent = new HermesAgent();
 const router = new JevRouter();
 const speech = new SpeechOutput();
 const badge = new Badge();
-const gestures = new GestureControl({ worker: new HandWorker(), hypr, beforeAction: clearHudForGesture });
+const gestureDebug = new GestureDebug();
+const handWorker = new HandWorker();
+const gestures = new GestureControl({ worker: handWorker, hypr, beforeAction: clearHudForGesture });
 let conversation = null; // created once app paths are known
 let dispatcher = null; // routes each finished command; created with the conversation
 
@@ -287,9 +290,11 @@ app.whenReady().then(() => {
       gestureMode = state.mode;
     }
     badge.state(state);
+    gestureDebug.state(state);
   });
+  handWorker.on('frame', (frame) => gestureDebug.frame(frame));
   gestures.on('action', (action) => {
-    log(`gesture: ${action.pose} ${action.direction} -> ${action.action}`);
+    log(`gesture: ${action.action} ${action.workspace ?? action.direction} -> ${action.dispatcher}`);
     badge.action(action);
   });
   gestures.on('error', (message) => console.error(`[friday] gestures: ${message}`));
@@ -327,6 +332,8 @@ app.whenReady().then(() => {
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
   badge.create();
+  gestureDebug.create();
+  if (gestureDebug.enabled) log('gesture debug view on (FRIDAY_GESTURE_DEBUG=1)');
   // SUPER+ALT+G while Friday was not running started this instance: do what it asked.
   if (initialCommand === 'gesture') gestures.enable();
   listener.start();

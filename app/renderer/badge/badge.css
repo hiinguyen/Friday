@@ -47,16 +47,20 @@ body[data-mode='on'] .dot {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
-body[data-pose='fist'] .badge {
+body[data-carrying='true'] .badge {
   border-color: var(--amber);
   color: var(--amber);
 }
 
-body[data-pose='none'] .pose {
+.flash[data-action='carry'] {
+  color: var(--amber);
+}
+
+body[data-hand='none'] .hand {
   color: var(--cyan-dim);
 }
 
-.pose {
+.hand {
   flex: 1;
   white-space: nowrap;
 }
@@ -74,15 +78,18 @@ body[data-pose='none'] .pose {
   display: grid;
   place-items: center;
   border-radius: 24px;
-  background: rgba(79, 216, 255, 0.16);
+  background: rgb(10, 40, 52); /* opaque: the label underneath must not show through */
   color: var(--cyan-hot);
-  font-size: 22px;
+  font-family: var(--font-data);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   opacity: 0;
   pointer-events: none;
 }
 
 .badge.flashing .flash {
-  animation: flash 450ms var(--ease-out);
+  animation: flash 900ms var(--ease-out);
 }
 
 @keyframes pulse {

@@ -199,20 +199,38 @@ A TypeSafe key with `FRIDAY_JEV_URL=https://api.typesafe.ai/v1/systemone` skips 
 
 ## Gesture control
 
-Say "Friday, turn on gesture control" (or "bật điều khiển cử chỉ"), or press SUPER+ALT+G, and the webcam starts watching for one hand.
-A small badge in the top-right corner shows that the camera is on and what hand it sees.
+Say "Friday, turn on gesture control" (or "bật điều khiển cử chỉ"), or press SUPER+ALT+G, and the webcam starts watching for your hands.
+A small badge in the top-right corner shows that the camera is on and what it sees.
 
-| Hand | Swipe | Hyprland dispatcher | Effect |
-| --- | --- | --- | --- |
-| open palm | left | `workspace e-1` | previous open workspace on this monitor |
-| open palm | right | `workspace e+1` | next open workspace on this monitor |
-| fist | left | `movetoworkspace r-1` | carry the focused window to the previous workspace (may be empty) |
-| fist | right | `movetoworkspace r+1` | carry the focused window to the next workspace (may be empty) |
+| Hands | Effect |
+| --- | --- |
+| 1 to 5 fingers held up for 0.5 s (thumb counts) | go to that workspace (`workspace N`) |
+| a fist, then 1 to 5 fingers within 3 s | carry the focused window there and follow it (`movetoworkspace N`) |
+| thumb on index tip (a pinch), dragged up / down | scroll the focused window a page on / back (Page Down / Page Up) |
+| a pinch dragged right / left | back / forward (Alt+Left / Alt+Right) |
+| both index fingers out, spread apart / brought together | zoom the screen in / out (`cursor:zoom_factor`, 1x to 4x) |
 
 The camera image is mirrored, so "right" is your own right.
-A swipe is a quick sideways movement across about a quarter of the camera's view; after one, nothing is read for about a second, so bringing the hand back does nothing.
+A count fires once: hold another count, make a fist, or take the hand away to fire again.
+Going to the workspace you are already on does nothing, so `binds:workspace_back_and_forth` does not bounce you back.
+
+Swipes go like a phone's: drag the page up to read on.
+A vertical drag scrolls once for every tenth of the camera's view it covers; a sideways drag goes back or forward once per pinch.
+A pinch only swipes the way it started, so bringing the hand back to scroll on, still pinching, scrolls nothing; open the fingers and pinch again to go the other way.
+Swipes are keys Hyprland sends to the focused window (`sendshortcut`), so nothing needs installing.
+While a hand pinches, finger counts are paused.
+
+The zoom follows the spread between your hands: twice as far apart as when it took hold is twice the zoom.
+It stays where you leave it, and the next pull zooms on from there; below 1.1x it snaps back to 1x.
+Two hands in view hold finger commands off until no hand is, so the hand you lower last does not switch workspaces.
+While the screen is zoomed in gesture control stays on, and turning it off zooms back out.
+
 Gesture control turns itself off, and the camera with it, after 20 s without a hand in view (`FRIDAY_GESTURE_IDLE_S`), on "turn off gesture control", or on SUPER+ALT+G.
-Frames never leave the machine: MediaPipe runs on the CPU, about 11 ms per frame.
+`FRIDAY_GESTURE_HOLD_MS`, `FRIDAY_GESTURE_GRAB_MS` and `FRIDAY_GESTURE_CARRY_MS` tune the timing.
+`FRIDAY_GESTURE_DEBUG=1` adds a window in the bottom-right corner with the camera picture, the hand skeletons, the count and how close it is to firing.
+Frames never leave the machine: MediaPipe runs on the CPU, and the debug pictures only go to the Electron shell.
+The camera is read uncompressed (YUYV): a Logitech C270 sends MJPG that libjpeg warns about on every frame, at the same frame rate.
+In a dim room auto exposure caps the frame rate (15 fps on the C270, 10 on the integrated camera), and tracking is smoother with more light.
 MediaPipe imports `sounddevice`, whose PortAudio JACK backend gets the process killed on this setup; `hands.py` puts a stub in its place before loading MediaPipe.
 
 ## Spoken replies

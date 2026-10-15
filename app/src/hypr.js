@@ -44,9 +44,15 @@ async function dispatch(args, options) {
   if (reply !== 'ok') throw new Error(`Hyprland refused "dispatch ${args}": ${reply}`);
 }
 
+/** Set a config option for this session, e.g. ("cursor:zoom_factor", 2); rejects unless Hyprland says "ok". */
+async function keyword(name, value, options) {
+  const reply = (await request(`keyword ${name} ${value}`, options)).trim();
+  if (reply !== 'ok') throw new Error(`Hyprland refused "keyword ${name} ${value}": ${reply}`);
+}
+
 /** The focused workspace: {id, name, monitor, ...}. */
 async function activeWorkspace(options) {
   return JSON.parse(await request('j/activeworkspace', options));
 }
 
-module.exports = { activeWorkspace, dispatch, request, socketPath };
+module.exports = { activeWorkspace, dispatch, keyword, request, socketPath };
