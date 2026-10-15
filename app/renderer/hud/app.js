@@ -254,6 +254,8 @@ function renderReply() {
   const text = command.reply.trimStart();
   if (el.textContent !== text) el.textContent = text;
   el.classList.toggle('typing', command.agent === 'working' && !text);
+  // More reply than fits between the command and the status line: fade the cut edge.
+  el.classList.toggle('clipped', el.scrollHeight > el.clientHeight + 1);
 }
 
 function onAgent(event) {

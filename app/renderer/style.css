@@ -299,7 +299,16 @@ body[data-state='exit'] :is(.title, .center-copy, .panel, .footer, .frame, .hint
   left: 0;
   right: 0;
   top: calc(50% + var(--r) * 1.66);
+  /* Stop above the Esc hint: on a short screen a long reply shrinks instead of running off it. */
+  bottom: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
+}
+
+.center-copy > * {
+  flex-shrink: 0;
 }
 
 .greeting {
@@ -349,6 +358,15 @@ body[data-state='exit'] :is(.title, .center-copy, .panel, .footer, .frame, .hint
 }
 .reply:empty {
   display: none;
+}
+/* Only the reply gives way to a short screen; its cut-off edge fades out instead of slicing a line. */
+.center-copy > .reply {
+  flex-shrink: 1;
+  min-height: 0;
+}
+.reply.clipped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6em), transparent);
 }
 
 :is(.greeting, .command).typing::after {
