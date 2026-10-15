@@ -278,9 +278,14 @@ app.whenReady().then(() => {
   });
   speech.on('error', (message) => console.error(`[friday] voice: ${message}`));
 
+  let gestureMode = 'off';
   gestures.on('state', (state) => {
-    if (state.mode === 'off') log(`gesture control: off${state.reason ? ` (${state.reason})` : ''}`);
-    else if (state.mode === 'on' && state.pose === 'none' && !state.workspace) log('gesture control: on, camera open');
+    // State also changes with every pose; the journal only wants the mode changes.
+    if (state.mode !== gestureMode) {
+      if (state.mode === 'off') log(`gesture control: off${state.reason ? ` (${state.reason})` : ''}`);
+      else if (state.mode === 'on') log('gesture control: on, camera open');
+      gestureMode = state.mode;
+    }
     badge.state(state);
   });
   gestures.on('action', (action) => {
