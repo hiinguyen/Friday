@@ -23,8 +23,8 @@ body {
   padding: 0 16px;
   border: 1px solid var(--cyan-dim);
   border-radius: 24px;
-  background: rgba(2, 14, 22, 0.78);
-  box-shadow: 0 0 12px rgba(79, 216, 255, 0.18);
+  background: rgba(2, 14, 22, 0.94); /* no blur behind it: keep windows below from showing through the text */
+  box-shadow: 0 0 3px rgba(79, 216, 255, 0.24); /* within the 4px inset, or the window edge clips it */
   color: var(--cyan);
   font-family: var(--font-display);
   font-size: 12px;
