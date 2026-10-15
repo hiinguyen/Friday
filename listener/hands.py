@@ -18,6 +18,7 @@ Frames never leave this process. Run standalone to debug:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import signal
@@ -33,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CAMERA = "/dev/video0"
 DEFAULT_MODEL = ROOT / "models" / "hand_landmarker.task"
 FRAME_WIDTH, FRAME_HEIGHT, FPS = 640, 480, 30
+PR_SET_PDEATHSIG = 1  # linux/prctl.h
 
 
 def camera_device() -> str:
@@ -47,6 +49,17 @@ def hand_model_path() -> Path:
 def emit(event: dict) -> None:
     sys.stdout.write(json.dumps(event) + "\n")
     sys.stdout.flush()
+
+
+def exit_with_parent() -> None:
+    """Have the kernel send SIGTERM when the Electron shell dies, however it dies.
+
+    hands.py writes only when the pose changes, so a dead shell would otherwise
+    go unnoticed, and the camera stay on, until the next pose change.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG) failed")
 
 
 class Tracker:
@@ -134,6 +147,7 @@ def main() -> int:
     argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args()
     # Stopping gesture mode sends SIGTERM: unwind through finally to release the camera.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    exit_with_parent()
     try:
         landmarker = load_landmarker(hand_model_path())
     except Exception as exc:  # noqa: BLE001 - any load failure is reported, then the shell retries

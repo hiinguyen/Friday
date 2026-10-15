@@ -6,6 +6,10 @@ smoke test needs models/hand_landmarker.task (not in git) and mediapipe.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -61,3 +65,55 @@ def test_the_landmarker_finds_no_hand_in_a_black_frame():
         assert hands.find_hand(landmarker, np.zeros((480, 640, 3), np.uint8), 0) is None
     finally:
         landmarker.close()
+
+
+# A parent that starts a child calling exit_with_parent(), then is SIGKILLed like a crashed shell.
+CHILD = """
+import os, sys, time
+sys.path.insert(0, {listener!r})
+import hands
+hands.exit_with_parent()
+tmp = {pidfile!r} + ".tmp"
+with open(tmp, "w") as f:
+    f.write(str(os.getpid()))
+os.replace(tmp, {pidfile!r})
+time.sleep(30)
+"""
+PARENT = """
+import subprocess, sys, time
+subprocess.Popen([sys.executable, {child!r}])
+time.sleep(30)
+"""
+
+
+def _running(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def _wait_for(condition, timeout_s: float, message: str) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not condition():
+        assert time.monotonic() < deadline, message
+        time.sleep(0.05)
+
+
+def test_the_tracker_exits_when_the_shell_dies(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    child = tmp_path / "child.py"
+    child.write_text(CHILD.format(listener=str(Path(hands.__file__).resolve().parent), pidfile=str(pidfile)))
+    script = tmp_path / "parent.py"
+    script.write_text(PARENT.format(child=str(child)))
+    parent = subprocess.Popen([sys.executable, str(script)])
+    try:
+        _wait_for(pidfile.exists, 10, "the child never started")
+        child_pid = int(pidfile.read_text())
+        parent.kill()
+        parent.wait()
+        _wait_for(lambda: not _running(child_pid), 5, "the child outlived its parent")
+    finally:
+        parent.kill()
+        if pidfile.exists() and _running(int(pidfile.read_text())):
+            os.kill(int(pidfile.read_text()), 9)
