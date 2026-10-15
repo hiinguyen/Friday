@@ -70,6 +70,30 @@ test('a wpctl failure surfaces as an error', async () => {
 });
 
 test('every local route has a handler, and unknown routes are refused', async () => {
-  assert.deepEqual([...LOCAL_ROUTES].sort(), ['mute', 'time', 'unmute', 'volume_down', 'volume_up']);
+  assert.deepEqual([...LOCAL_ROUTES].sort(), ['gesture_off', 'gesture_on', 'mute', 'time', 'unmute', 'volume_down', 'volume_up']);
   await assert.rejects(runLocal('agent', 'x', { exec: fakeWpctl().exec }), /not a local route/);
+});
+
+function fakeGestures() {
+  const calls = [];
+  return {
+    calls,
+    enable: () => calls.push('enable'),
+    disable: () => calls.push('disable'),
+  };
+}
+
+test('gesture control is turned on and off, answered in the language asked', async () => {
+  const gestures = fakeGestures();
+  assert.equal(await runLocal('gesture_on', 'turn on gesture control', { gestures }), 'Gesture control on.');
+  assert.equal(await runLocal('gesture_off', 'tắt điều khiển cử chỉ', { gestures }), 'Đã tắt điều khiển bằng cử chỉ.');
+  assert.equal(await runLocal('gesture_on', 'bật điều khiển cử chỉ', { gestures }), 'Đã bật điều khiển bằng cử chỉ.');
+  assert.equal(await runLocal('gesture_off', 'stop gesture control', { gestures }), 'Gesture control off.');
+  assert.deepEqual(gestures.calls, ['enable', 'disable', 'enable', 'disable']);
+});
+
+test('the gesture routes are local, and need gesture control to exist', async () => {
+  assert.ok(LOCAL_ROUTES.has('gesture_on'));
+  assert.ok(LOCAL_ROUTES.has('gesture_off'));
+  await assert.rejects(runLocal('gesture_on', 'turn on gesture control'), /gesture control is not available/);
 });

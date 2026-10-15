@@ -7,7 +7,8 @@
 //
 //   new_conversation, cancel     handled by dispatch.js, no agent run (only when
 //                                Jev is very sure: a wrong guess loses the request)
-//   time, volume_*, (un)mute     handled on this machine (local.js)
+//   time, volume_*, (un)mute,    handled on this machine (local.js)
+//   gesture_on, gesture_off
 //   simple                       a one-fact task; only labelled for now
 //   agent                        the remote Hermes agent, as before Jev
 //
@@ -49,6 +50,8 @@ const INTENTS = {
   volume_down: 'Make the computer quieter',
   mute: 'Mute the computer sound',
   unmute: 'Unmute the computer sound',
+  gesture_on: 'Turn on hand gesture control of the computer, where the camera watches hand movements',
+  gesture_off: 'Turn off hand gesture control of the computer',
 };
 
 const COMPLEXITY = {

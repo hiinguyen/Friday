@@ -51,7 +51,7 @@ test('parseAnswers reads both the JevStation envelope and the bare TypeSafe body
 });
 
 test('a confident local intent is routed to its local handler', () => {
-  for (const name of ['new_conversation', 'cancel', 'time', 'volume_up', 'volume_down', 'mute', 'unmute']) {
+  for (const name of ['new_conversation', 'cancel', 'time', 'volume_up', 'volume_down', 'mute', 'unmute', 'gesture_on', 'gesture_off']) {
     const decision = decide({ intent: intent(name), complexity: complexity('simple') }, 0.5);
     assert.equal(decision.route, name);
   }

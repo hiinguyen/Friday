@@ -1,7 +1,8 @@
 'use strict';
 
 // Commands Friday answers on this machine, without the remote agent: the time,
-// and the volume of the default PipeWire sink. The Jev router (router.js)
+// the volume of the default PipeWire sink, and turning gesture control on or
+// off (gestures.js). The Jev router (router.js)
 // picks them; this module only carries them out and says what it did, in the
 // language the command was spoken in.
 
@@ -64,14 +65,27 @@ const HANDLERS = {
     await exec('wpctl', ['set-mute', SINK, '0']);
     return isVietnamese(text) ? 'Đã bật tiếng.' : 'Sound on.';
   },
+  gesture_on: async (text, { gestures }) => {
+    if (!gestures) throw new Error('gesture control is not available');
+    gestures.enable();
+    return isVietnamese(text) ? 'Đã bật điều khiển bằng cử chỉ.' : 'Gesture control on.';
+  },
+  gesture_off: async (text, { gestures }) => {
+    if (!gestures) throw new Error('gesture control is not available');
+    gestures.disable();
+    return isVietnamese(text) ? 'Đã tắt điều khiển bằng cử chỉ.' : 'Gesture control off.';
+  },
 };
 
 const LOCAL_ROUTES = new Set(Object.keys(HANDLERS));
 
-/** Carry out a local route for the command `text`; resolves to the reply to show and speak. */
-async function runLocal(route, text, { exec = defaultExec, now = () => new Date() } = {}) {
+/**
+ * Carry out a local route for the command `text`; resolves to the reply to show and speak.
+ * `gestures` is the GestureControl the gesture routes switch.
+ */
+async function runLocal(route, text, { exec = defaultExec, now = () => new Date(), gestures = null } = {}) {
   if (!LOCAL_ROUTES.has(route)) throw new Error(`${route} is not a local route`);
-  return HANDLERS[route](text, { exec, now });
+  return HANDLERS[route](text, { exec, now, gestures });
 }
 
 module.exports = { LOCAL_ROUTES, isVietnamese, runLocal, timeReply };
