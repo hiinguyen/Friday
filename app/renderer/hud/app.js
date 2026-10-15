@@ -6,7 +6,7 @@
 // clip-path, so the compositor handles them. The only per-frame raster work
 // is the reactor stage canvas, sized to the reactor's bounding box.
 
-import { CommandTracker, dismissDeadline } from './command.js';
+import { CommandTracker, dismissDeadline, routeLog } from './command.js';
 import { scrambleText, typeText } from './fx.js';
 import { Panels } from './panels.js';
 import { Particles } from './particles.js';
@@ -218,7 +218,10 @@ function statusText() {
   if (listenerStatus.listener === 'error') return 'Microphone offline';
   if (hud.state === 'exit') return 'Standing by';
   if (command.speaking) return 'Speaking';
+  if (command.agent === 'working' && command.route === 'routing') return 'Routing';
   if (command.agent === 'working') return command.tool ? `Running ${command.tool}` : 'Working';
+  if (command.agent === 'done' && command.route === 'simple') return 'Simple task, no handler yet';
+  if (command.agent === 'done' && command.route === 'cancel') return 'Cancelled';
   switch (command.phase) {
     case 'listening':
       return voice.speaking ? 'Voice input detected' : 'Listening';
@@ -263,8 +266,10 @@ function onAgent(event) {
   if (event.session === 'new') panels.log('Hermes link', 'info', 'NEW CONVERSATION');
   if (event.session === 'continued') panels.log('Hermes link', 'info', 'CONTINUING');
   if (event.session === 'reset') panels.log('Conversation reset', 'ok');
+  const route = routeLog(event);
+  if (route) panels.log(clip(route.text), route.kind, route.value);
   if (event.tool) panels.log(`Hermes: ${clip(event.tool)}`, 'info');
-  if (event.state === 'error') panels.log(`Hermes: ${clip(event.error || 'failed')}`, 'err');
+  if (event.state === 'error') panels.log(`${event.source ?? 'Hermes'}: ${clip(event.error || 'failed')}`, 'err');
   // Progress keeps the HUD awake for as long as the agent works.
   hud.wakeAt = performance.now();
   renderReply();

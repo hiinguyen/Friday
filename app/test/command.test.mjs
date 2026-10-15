@@ -6,6 +6,7 @@ import {
   REJECTED_DISMISS_MS,
   SPEECH_WATCHDOG_MS,
   dismissDeadline,
+  routeLog,
   stripWakePhrase,
 } from '../renderer/hud/command.js';
 
@@ -249,4 +250,45 @@ test('speech of an older command is ignored', () => {
   t.onCapture({ id: 2, state: 'listening' }, 4000);
   assert.equal(t.onSpeech({ id: 1, state: 'speaking' }, 4100), false);
   assert.ok(!t.speaking);
+});
+
+test('the route Jev picked becomes one HUD log line', () => {
+  assert.deepEqual(routeLog({ id: 1, state: 'working', phase: 'routing' }), { text: 'Jev routing', kind: 'info', value: '' });
+  assert.deepEqual(routeLog({ id: 1, state: 'working', route: 'simple', confidence: 0.981 }), {
+    text: 'Jev route',
+    kind: 'ok',
+    value: 'SIMPLE 98%',
+  });
+  assert.deepEqual(routeLog({ id: 1, route: 'volume_up', confidence: 1 }).value, 'VOLUME UP 100%');
+  assert.deepEqual(routeLog({ id: 1, route: 'agent', confidence: 0.9, reason: 'follow-up' }), {
+    text: 'Jev route',
+    kind: 'ok',
+    value: 'HERMES 90%',
+  });
+  assert.deepEqual(routeLog({ id: 1, route: 'agent', confidence: 0.42, reason: 'unsure' }), {
+    text: 'Jev unsure',
+    kind: 'warn',
+    value: 'HERMES 42%',
+  });
+  assert.deepEqual(routeLog({ id: 1, route: 'agent', confidence: 0, reason: 'error', routeError: 'Jev timed out' }), {
+    text: 'Jev: Jev timed out',
+    kind: 'warn',
+    value: 'HERMES',
+  });
+  assert.equal(routeLog({ id: 1, state: 'done' }), null);
+});
+
+test('the tracker remembers the route Jev picked, and a new command forgets it', () => {
+  const t = new CommandTracker();
+  t.onCapture({ id: 1, state: 'listening' });
+  t.onTranscript({ id: 1, text: 'gold price today', final: true });
+  t.onAgent({ id: 1, state: 'working', phase: 'routing' }, 10);
+  assert.equal(t.route, 'routing');
+  assert.equal(t.agent, 'working');
+  t.onAgent({ id: 1, state: 'working', route: 'simple', confidence: 0.98 }, 20);
+  t.onAgent({ id: 1, state: 'done' }, 30);
+  assert.equal(t.route, 'simple');
+  assert.equal(t.agent, 'done');
+  t.onCapture({ id: 2, state: 'listening' });
+  assert.equal(t.route, '');
 });

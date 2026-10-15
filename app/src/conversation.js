@@ -83,6 +83,11 @@ class Conversation {
     return !this.prefix;
   }
 
+  /** True when a command arriving now would continue the current conversation. */
+  get warm() {
+    return !this.stateless && Boolean(this.session) && this.now() - this.lastAt <= this.idleMs;
+  }
+
   load() {
     if (!this.file || this.stateless) return;
     let state;

@@ -11,7 +11,10 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 // Before anything reads its settings: every module below may.
 require('./env').loadEnvFile();
 const { HermesAgent } = require('./agent');
-const { Conversation, isResetCommand } = require('./conversation');
+const { Conversation } = require('./conversation');
+const { CommandDispatcher } = require('./dispatch');
+const { runLocal } = require('./local');
+const { JevRouter } = require('./router');
 const { WakeListener } = require('./listener');
 const { SpeechOutput } = require('./speech');
 const { createSampler } = require('./stats');
@@ -19,7 +22,6 @@ const { createSampler } = require('./stats');
 const WINDOW_TITLE = 'F.R.I.D.A.Y.';
 const STATS_INTERVAL_MS = 1000;
 const COMMANDS = new Set(['wake', 'hide', 'toggle']);
-const NEW_CONVERSATION_REPLY = 'Starting a new conversation.';
 // FRIDAY_DEBUG=1 makes the renderer log steady-state fps after each wake.
 const DEBUG = process.env.FRIDAY_DEBUG === '1';
 
@@ -52,11 +54,10 @@ const VOICEPRINT_LOG = { armed: 'enrolled voice only', unusable: 'voiceprint unu
 const sampleStats = createSampler();
 const listener = new WakeListener();
 const agent = new HermesAgent();
+const router = new JevRouter();
 const speech = new SpeechOutput();
 let conversation = null; // created once app paths are known
-let agentRun = 0; // id of the latest agent run
-let runFresh = false; // whether the latest run opened a new conversation
-let dismissedRun = 0; // a run whose HUD was dismissed: whatever it still says stays silent
+let dispatcher = null; // routes each finished command; created with the conversation
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -156,7 +157,8 @@ function hideHud() {
 function onHudHidden(_event, seq) {
   if (seq !== wakeSeq) return; // stale: a newer wake already rebooted the HUD
   // Dismissed (Esc, a click, or idle): the run is abandoned and she stops talking.
-  dismissedRun = agentRun;
+  dispatcher.abandon();
+  router.cancel();
   agent.cancel();
   speech.cancel();
   markHidden();
@@ -166,24 +168,6 @@ function runCommand(command) {
   if (command === 'wake') showHud(1);
   else if (command === 'hide') hideHud();
   else if (command === 'toggle') (visible ? hideHud() : showHud(1));
-}
-
-function askAgent(id, text) {
-  const { session, fresh } = conversation.begin();
-  runFresh = fresh;
-  agent.ask(id, text, session);
-}
-
-/** "Friday, new conversation": answered here, never sent to the agent. */
-function startNewConversation(id) {
-  conversation.reset();
-  log(`command #${id}: new conversation`);
-  agentRun = id;
-  dismissedRun = 0;
-  send('hud:reply', { id, text: NEW_CONVERSATION_REPLY, final: true });
-  send('hud:agent', { id, state: 'done', session: 'reset' });
-  speech.say(id, NEW_CONVERSATION_REPLY);
-  speech.end(id);
 }
 
 function setListenerStatus(status) {
@@ -206,7 +190,9 @@ app.whenReady().then(() => {
   });
   listener.on('wake', (conf) => {
     log(`wake word detected (conf=${conf})`);
-    agent.cancel(); // a new command abandons whatever the last one was still doing
+    dispatcher.abandon(); // a new command abandons whatever the last one was still doing
+    router.cancel();
+    agent.cancel();
     speech.cancel(); // and she stops talking to listen
     showHud(conf);
   });
@@ -228,9 +214,8 @@ app.whenReady().then(() => {
     if (event.error) console.error(`[friday] transcription #${event.id} failed: ${event.error}`);
     send('hud:transcript', event);
     // The wake word alone or an empty transcript is not a command: nothing to run.
-    if (!event.final || !event.text || !agent.enabled) return;
-    if (isResetCommand(event.text)) startNewConversation(event.id);
-    else askAgent(event.id, event.text);
+    if (!event.final || !event.text || !(agent.enabled || router.enabled)) return;
+    dispatcher.handle(event.id, event.text);
   });
   listener.on('error', (message) => {
     console.error(`[friday] ${message}`);
@@ -238,9 +223,7 @@ app.whenReady().then(() => {
   });
 
   agent.on('start', (a) => {
-    agentRun = a.id;
-    dismissedRun = 0; // a new run: ids restart with the listener, so never match an old one
-    const session = runFresh ? 'new' : 'continued';
+    const session = dispatcher.fresh ? 'new' : 'continued';
     log(`agent #${a.id}: working (${session} conversation)`);
     send('hud:agent', { id: a.id, state: 'working', session });
   });
@@ -250,7 +233,7 @@ app.whenReady().then(() => {
   });
   agent.on('delta', (a) => {
     send('hud:reply', { id: a.id, delta: a.text });
-    if (a.id !== dismissedRun) speech.say(a.id, a.text); // spoken sentence by sentence while the rest streams in
+    if (!dispatcher.isSilenced(a.id)) speech.say(a.id, a.text); // spoken sentence by sentence while the rest streams in
   });
   agent.on('done', (a) => {
     log(`agent #${a.id}: replied ${a.text.length} chars`);
@@ -258,12 +241,14 @@ app.whenReady().then(() => {
     send('hud:agent', { id: a.id, state: 'done' });
     speech.end(a.id);
     conversation.touch();
+    dispatcher.onAgentDone(a.id, a.text);
   });
   agent.on('error', (a) => {
     console.error(`[friday] agent #${a.id} failed: ${a.message}`);
     send('hud:agent', { id: a.id, state: 'error', error: a.message });
     speech.end(a.id); // finish the sentence it was on, if any
     conversation.touch();
+    dispatcher.onAgentError(a.id);
   });
 
   speech.on('ready', ({ voice }) => log(`voice ready: ${voice}`));
@@ -280,6 +265,16 @@ app.whenReady().then(() => {
     file: path.join(app.getPath('userData'), 'conversation.json'),
     onError: (message) => console.error(`[friday] ${message}`),
   });
+  dispatcher = new CommandDispatcher({
+    router,
+    agent,
+    conversation,
+    speech,
+    runLocal,
+    send,
+    log,
+    logError: (message) => console.error(`[friday] ${message}`),
+  });
   if (agent.enabled) {
     const session = agent.session
       ? `, sessions ${agent.session}-*, new after ${agent.sessionIdleMs / 1000}s idle`
@@ -287,6 +282,11 @@ app.whenReady().then(() => {
     log(`agent bridge: ${agent.baseUrl} (model ${agent.model}${session})`);
   } else {
     log('agent bridge: disabled (set FRIDAY_AGENT_URL and FRIDAY_AGENT_KEY)');
+  }
+  if (router.enabled) {
+    log(`jev router: ${router.url} (model ${router.model}, min confidence ${router.minConfidence})`);
+  } else {
+    log(`jev router: disabled (${router.disabledReason}), every command goes to the agent`);
   }
 
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
@@ -298,6 +298,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', (event) => event.preventDefault());
 app.on('before-quit', () => {
   listener.stop();
+  router.cancel();
   agent.close();
   speech.stop();
 });

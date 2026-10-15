@@ -33,7 +33,8 @@ agent reply -> app/src (Electron main) --JSON lines--> listener/tts.py (Pocket T
   The API client connects over IPv4 first and falls back to IPv6, so a network with a dead IPv6 route (common with phone tethering) does not stall commands.
   Behind a proxy (`HTTPS_PROXY`, `ALL_PROXY`) the proxy is used as configured instead.
 - With a voiceprint enrolled, `listener/speaker.py` checks every command before it is sent: see [Speaker verification](#speaker-verification).
-- `app/src/agent.js` forwards the transcript of every verified command to a remote Hermes Agent API server, if one is configured, and streams the reply onto the HUD: see [Agent bridge](#agent-bridge).
+- `app/src/router.js` asks Jev, a typed-decision model, where each verified command should go: answered on this machine, labelled as a simple task, or sent to the agent. See [Intent routing](#intent-routing).
+- `app/src/agent.js` forwards the transcript of every command routed to the agent to a remote Hermes Agent API server, if one is configured, and streams the reply onto the HUD: see [Agent bridge](#agent-bridge).
   Nothing is installed locally and the bridge is inert until `FRIDAY_AGENT_URL` and `FRIDAY_AGENT_KEY` are set.
 - `listener/tts.py` reads the reply aloud in a cloned voice as it streams in: see [Spoken replies](#spoken-replies).
 - `app/src/main.js` keeps a hidden transparent window warm, so the HUD appears instantly.
@@ -107,6 +108,11 @@ real environment wins over it, and `systemctl --user restart friday` applies a c
 | `FRIDAY_AGENT_SESSION` | `friday` | Prefix of the `X-Hermes-Session-Id` (`friday-20261014-203105`); empty makes each command stateless |
 | `FRIDAY_AGENT_SESSION_IDLE_S` | `600` | A pause longer than this after the last reply starts a new conversation |
 | `FRIDAY_AGENT_TIMEOUT_S` | `120` | Abandon a run after this many seconds |
+| `JEV_API_KEY` | unset | JevStation (or TypeSafe) key for the intent router; unset sends every command to the agent |
+| `FRIDAY_JEV_URL` | `https://jevstation.com/api/v1/systemone` | Jev endpoint; `https://api.typesafe.ai/v1/systemone` calls TypeSafe directly |
+| `FRIDAY_JEV_MODEL` | `jev-1.13.0` | Jev model, pinned so the threshold does not drift with an alias |
+| `FRIDAY_JEV_MIN_CONFIDENCE` | `0.5` | Below this confidence a command goes to the agent |
+| `FRIDAY_JEV_TIMEOUT_S` | `8` | Give up on Jev and send the command to the agent |
 | `FRIDAY_TTS` | on | `off` keeps replies silent and frees the voice model's memory |
 | `FRIDAY_TTS_VOICE` | `models/tts-voice.safetensors` | Voice exported by `bin/friday voice`; without the file replies are silent |
 
@@ -158,6 +164,34 @@ the wake word and transcription keep working exactly as before.
 or an SSH tunnel rather than plain HTTP, and restrict what the agent may do **on the server** - a
 dedicated Hermes profile with a narrow toolset, exposed under `/p/<profile>/` with its own key - not
 by trusting the client. Friday's voiceprint still decides whose speech is uploaded.
+
+## Intent routing
+
+With `JEV_API_KEY` set, every command is classified by [Jev](https://docs.typesafe.ai/introduction), TypeSafe's System One model, before anything handles it.
+Jev is not a chat model: one request carries the transcript and a few typed questions, and returns typed answers with calibrated confidence.
+`app/src/router.js` asks what the command wants (intent), whether it is a one-fact task (complexity), and, while a conversation is warm, whether it follows up on the agent's last answer.
+Code, not a prompt, then picks the route, and `app/src/dispatch.js` carries it out:
+
+| Route | Example | What happens |
+| --- | --- | --- |
+| `new_conversation` | "let's talk about something else" | The session is reset locally, as with the exact reset phrases |
+| `cancel` | "never mind" | She stops talking; the HUD stays up |
+| `time` | "mấy giờ rồi" | Answered locally, in the language of the command |
+| `volume_up`, `volume_down`, `mute`, `unmute` | "turn it down a bit" | `wpctl` on the default sink, 10% steps, never above 100% |
+| `simple` | "giá vàng hôm nay" | Only labelled (`SIMPLE TASK, NO HANDLER YET`); `onSimple` in `app/src/main.js` is where a quick answerer plugs in |
+| `agent` | "list the newest files in Downloads" | Sent to Hermes, as before the router; a follow-up always stays with Hermes |
+
+Jev never drops a command.
+No key, an HTTP error, a timeout or an answer below `FRIDAY_JEV_MIN_CONFIDENCE` all send the command to the agent.
+`cancel` and `new_conversation` end the request or discard the conversation, so they need at least 0.85 confidence; below that the agent gets the command.
+The exact reset phrases are still matched locally and never cost a Jev call.
+The HUD log shows `JEV ROUTE <ROUTE> <confidence>`, and the journal adds how long Jev took and the credits left.
+
+Jev is a third party: it sees the transcript and, while a conversation is warm, the last command and the first 200 characters of the agent's reply.
+The key is only ever sent over https.
+A [JevStation](https://jevstation.com) key costs one credit per command (50 free credits, then paid packs).
+JevStation answered in 1.4 to 5.9 s per call in October 2026, nearly all of it server side, so every routed command waits that long before it is handled.
+A TypeSafe key with `FRIDAY_JEV_URL=https://api.typesafe.ai/v1/systemone` skips the reseller.
 
 ## Spoken replies
 

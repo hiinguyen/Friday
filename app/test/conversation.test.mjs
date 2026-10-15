@@ -66,6 +66,22 @@ test('reset makes the next command start a new conversation', () => {
   assert.notEqual(next.session, session);
 });
 
+test('warm says whether the next command would continue the conversation, without starting one', () => {
+  const now = clock();
+  const conv = new Conversation({ prefix: 'friday', idleMs: IDLE, now });
+  assert.equal(conv.warm, false, 'nothing said yet');
+  conv.begin();
+  now.advance(IDLE);
+  assert.equal(conv.warm, true);
+  now.advance(1);
+  assert.equal(conv.warm, false, 'idle too long');
+  assert.equal(conv.warm, false, 'asking does not start a session');
+  conv.begin();
+  conv.reset();
+  assert.equal(conv.warm, false, 'reset');
+  assert.equal(new Conversation({ prefix: '', idleMs: IDLE, now }).warm, false, 'stateless is never warm');
+});
+
 test('an empty prefix is stateless: no session, every command fresh', () => {
   const conv = new Conversation({ prefix: '', idleMs: IDLE, now: clock() });
   assert.deepEqual(conv.begin(), { session: '', fresh: true });

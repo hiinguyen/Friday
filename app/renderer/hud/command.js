@@ -33,6 +33,21 @@ export function dismissDeadline(command, wakeAt, lastSpeechAt) {
   return Math.max(wakeAt, lastSpeechAt) + IDLE_DISMISS_MS;
 }
 
+/**
+ * The HUD log line for a Jev routing event ({phase: 'routing'} while Jev
+ * decides, then {route, confidence, reason?, routeError?}), or null if the
+ * event says nothing about routing. The agent route is shown as HERMES.
+ */
+export function routeLog({ phase, route, confidence = 0, reason, routeError }) {
+  if (phase === 'routing') return { text: 'Jev routing', kind: 'info', value: '' };
+  if (!route) return null;
+  const label = route === 'agent' ? 'HERMES' : route.replace(/_/g, ' ').toUpperCase();
+  if (reason === 'error') return { text: `Jev: ${routeError || 'failed'}`, kind: 'warn', value: label };
+  const value = `${label} ${Math.round(confidence * 100)}%`;
+  if (reason === 'unsure') return { text: 'Jev unsure', kind: 'warn', value };
+  return { text: 'Jev route', kind: 'ok', value };
+}
+
 export class CommandTracker {
   constructor() {
     this.latestId = 0; // survives reset(), so late events of a past capture stay stale
@@ -48,6 +63,7 @@ export class CommandTracker {
     // The agent (remote Hermes) side: idle -> working -> done | error.
     this.agent = 'idle';
     this.tool = '';
+    this.route = ''; // 'routing' while Jev decides, then the route it picked
     this.reply = '';
     this.speaking = false; // the reply is being read aloud
     this.updatedAt = 0;
@@ -122,9 +138,11 @@ export class CommandTracker {
    * The remote agent's lifecycle: 'working' (thinking or calling a tool),
    * 'done' or 'error'. Counts as progress so the watchdog resets.
    */
-  onAgent({ id, state, tool, error }, now = 0) {
+  onAgent({ id, state, tool, error, phase, route }, now = 0) {
     if (!this.accept(id)) return false;
     this.updatedAt = now;
+    if (phase === 'routing') this.route = 'routing';
+    if (route) this.route = route;
     if (state === 'error') {
       this.agent = 'error';
       this.error = error ?? '';
