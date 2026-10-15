@@ -15,6 +15,7 @@ mic -> pw-record -> listener/wake.py (Vosk, offline) --JSON lines--> app/src (El
                                     +-> listener/speaker.py (WeSpeaker voiceprint, offline)
 
 agent reply -> app/src (Electron main) --JSON lines--> listener/tts.py (Pocket TTS, offline) -> pw-cat -> speakers
+camera -> listener/hands.py (MediaPipe, offline, only in gesture mode) --JSON lines--> app/src/gestures.js -> Hyprland IPC
 ```
 
 - `listener/wake.py` decodes 16 kHz audio with a grammar-restricted Vosk model.
@@ -34,6 +35,7 @@ agent reply -> app/src (Electron main) --JSON lines--> listener/tts.py (Pocket T
   Behind a proxy (`HTTPS_PROXY`, `ALL_PROXY`) the proxy is used as configured instead.
 - With a voiceprint enrolled, `listener/speaker.py` checks every command before it is sent: see [Speaker verification](#speaker-verification).
 - `app/src/router.js` asks Jev, a typed-decision model, where each verified command should go: answered on this machine, labelled as a simple task, or sent to the agent. See [Intent routing](#intent-routing).
+- `app/src/gestures.js` runs gesture control: see [Gesture control](#gesture-control).
 - `app/src/agent.js` forwards the transcript of every command routed to the agent to a remote Hermes Agent API server, if one is configured, and streams the reply onto the HUD: see [Agent bridge](#agent-bridge).
   Nothing is installed locally and the bridge is inert until `FRIDAY_AGENT_URL` and `FRIDAY_AGENT_KEY` are set.
 - `listener/tts.py` reads the reply aloud in a cloned voice as it streams in: see [Spoken replies](#spoken-replies).
@@ -53,6 +55,7 @@ python -m venv .venv && .venv/bin/pip install torch --index-url https://download
 mkdir -p models && curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o /tmp/m.zip && unzip /tmp/m.zip -d models
 curl -L -o models/silero_vad.onnx https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx
 curl -L -o models/wespeaker_en_voxceleb_resnet34_LM.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx
+curl -L -o models/hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
 (cd app && npm install)
 ln -sf "$PWD/systemd/friday.service" ~/.config/systemd/user/friday.service && systemctl --user daemon-reload
 echo 'source = $HOME/Documents/friday/hypr/friday.conf' >> ~/.config/hypr/UserConfigs/WindowRules.conf
@@ -77,6 +80,7 @@ bin/friday voice ~/recording-of-the-voice.wav
 
 ```sh
 bin/friday wake | hide | toggle      # control the running instance
+bin/friday gesture                   # turn hand gesture control on or off (SUPER+ALT+G)
 bin/friday enroll                    # record your voiceprint (about a minute)
 bin/friday voice FILE                # clone the voice replies are spoken in, from a recording
 systemctl --user restart friday      # restart the service
@@ -192,6 +196,24 @@ The key is only ever sent over https.
 A [JevStation](https://jevstation.com) key costs one credit per command (50 free credits, then paid packs).
 JevStation answered in 1.4 to 5.9 s per call in October 2026, nearly all of it server side, so every routed command waits that long before it is handled.
 A TypeSafe key with `FRIDAY_JEV_URL=https://api.typesafe.ai/v1/systemone` skips the reseller.
+
+## Gesture control
+
+Say "Friday, turn on gesture control" (or "bật điều khiển cử chỉ"), or press SUPER+ALT+G, and the webcam starts watching for one hand.
+A small badge in the top-right corner shows that the camera is on and what hand it sees.
+
+| Hand | Swipe | Hyprland dispatcher | Effect |
+| --- | --- | --- | --- |
+| open palm | left | `workspace e-1` | previous open workspace on this monitor |
+| open palm | right | `workspace e+1` | next open workspace on this monitor |
+| fist | left | `movetoworkspace r-1` | carry the focused window to the previous workspace (may be empty) |
+| fist | right | `movetoworkspace r+1` | carry the focused window to the next workspace (may be empty) |
+
+The camera image is mirrored, so "right" is your own right.
+A swipe is a quick sideways movement across about a quarter of the camera's view; after one, nothing is read for about a second, so bringing the hand back does nothing.
+Gesture control turns itself off, and the camera with it, after 20 s without a hand in view (`FRIDAY_GESTURE_IDLE_S`), on "turn off gesture control", or on SUPER+ALT+G.
+Frames never leave the machine: MediaPipe runs on the CPU, about 11 ms per frame.
+MediaPipe imports `sounddevice`, whose PortAudio JACK backend gets the process killed on this setup; `hands.py` puts a stub in its place before loading MediaPipe.
 
 ## Spoken replies
 
