@@ -282,7 +282,7 @@ app.whenReady().then(() => {
   gestures.on('state', (state) => {
     // State also changes with every pose; the journal only wants the mode changes.
     if (state.mode !== gestureMode) {
-      if (state.mode === 'off') log(`gesture control: off${state.reason ? ` (${state.reason})` : ''}`);
+      if (state.mode === 'off') log(`gesture control: off${state.reason && state.reason !== 'off' ? ` (${state.reason})` : ''}`);
       else if (state.mode === 'on') log('gesture control: on, camera open');
       gestureMode = state.mode;
     }
