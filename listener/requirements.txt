@@ -7,3 +7,5 @@ python-dotenv>=1.2
 pytest>=9.1
 # Spoken replies; install torch from the CPU index first (see README), or pip pulls CUDA.
 pocket-tts>=3.3
+# Gesture control (listener/hands.py); brings its own opencv-contrib-python, do not add another OpenCV.
+mediapipe>=1.1.1
