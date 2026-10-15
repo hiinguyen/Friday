@@ -86,7 +86,6 @@ def _without_audio() -> None:
     # JACK backend (pipewire-jack) gets this process SIGKILLed while it starts.
     # Hand tracking needs no audio, so stand in for it before mediapipe loads.
     sys.modules.setdefault("sounddevice", types.ModuleType("sounddevice"))
-    os.environ.setdefault("GLOG_minloglevel", "2")  # keep MediaPipe's info lines out of the journal
 
 
 def load_landmarker(model: Path):
