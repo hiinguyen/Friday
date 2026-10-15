@@ -13,6 +13,8 @@ const INBOUND = [
   'hud:agent',
   'hud:reply',
   'hud:speech',
+  'badge:state',
+  'badge:action',
 ];
 
 contextBridge.exposeInMainWorld('friday', {

@@ -4,15 +4,19 @@
 // and reveals it whenever the wake-word listener hears "Friday".
 //
 // Control a running instance from the command line:
-//   friday wake | friday hide | friday toggle
+//   friday wake | friday hide | friday toggle | friday gesture
 
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 // Before anything reads its settings: every module below may.
 require('./env').loadEnvFile();
 const { HermesAgent } = require('./agent');
+const { Badge } = require('./badge');
 const { Conversation } = require('./conversation');
 const { CommandDispatcher } = require('./dispatch');
+const { GestureControl } = require('./gestures');
+const { HandWorker } = require('./hands');
+const hypr = require('./hypr');
 const { runLocal } = require('./local');
 const { JevRouter } = require('./router');
 const { WakeListener } = require('./listener');
@@ -21,7 +25,9 @@ const { createSampler } = require('./stats');
 
 const WINDOW_TITLE = 'F.R.I.D.A.Y.';
 const STATS_INTERVAL_MS = 1000;
-const COMMANDS = new Set(['wake', 'hide', 'toggle']);
+// Time for Hyprland to hand focus back after the HUD unmaps, before a gesture acts on the focused window.
+const HUD_UNMAP_MS = 120;
+const COMMANDS = new Set(['wake', 'hide', 'toggle', 'gesture']);
 // FRIDAY_DEBUG=1 makes the renderer log steady-state fps after each wake.
 const DEBUG = process.env.FRIDAY_DEBUG === '1';
 
@@ -56,6 +62,8 @@ const listener = new WakeListener();
 const agent = new HermesAgent();
 const router = new JevRouter();
 const speech = new SpeechOutput();
+const badge = new Badge();
+const gestures = new GestureControl({ worker: new HandWorker(), hypr, beforeAction: clearHudForGesture });
 let conversation = null; // created once app paths are known
 let dispatcher = null; // routes each finished command; created with the conversation
 
@@ -154,6 +162,16 @@ function hideHud() {
   send('hud:dismiss');
 }
 
+// The HUD covers the monitor and holds focus: a gesture right after "Friday,
+// turn on gesture control" must switch the workspace behind it and carry the
+// owner's window, not the HUD. Hide it at once, without the power-down animation.
+async function clearHudForGesture() {
+  if (!visible) return;
+  send('hud:dismiss');
+  markHidden();
+  await new Promise((resolve) => setTimeout(resolve, HUD_UNMAP_MS));
+}
+
 function onHudHidden(_event, seq) {
   if (seq !== wakeSeq) return; // stale: a newer wake already rebooted the HUD
   // Dismissed (Esc, a click, or idle): the run is abandoned and she stops talking.
@@ -168,6 +186,7 @@ function runCommand(command) {
   if (command === 'wake') showHud(1);
   else if (command === 'hide') hideHud();
   else if (command === 'toggle') (visible ? hideHud() : showHud(1));
+  else if (command === 'gesture') gestures.toggle();
 }
 
 function setListenerStatus(status) {
@@ -259,6 +278,17 @@ app.whenReady().then(() => {
   });
   speech.on('error', (message) => console.error(`[friday] voice: ${message}`));
 
+  gestures.on('state', (state) => {
+    if (state.mode === 'off') log(`gesture control: off${state.reason ? ` (${state.reason})` : ''}`);
+    else if (state.mode === 'on' && state.pose === 'none' && !state.workspace) log('gesture control: on, camera open');
+    badge.state(state);
+  });
+  gestures.on('action', (action) => {
+    log(`gesture: ${action.pose} ${action.direction} -> ${action.action}`);
+    badge.action(action);
+  });
+  gestures.on('error', (message) => console.error(`[friday] gestures: ${message}`));
+
   conversation = new Conversation({
     prefix: agent.session,
     idleMs: agent.sessionIdleMs,
@@ -270,7 +300,7 @@ app.whenReady().then(() => {
     agent,
     conversation,
     speech,
-    runLocal,
+    runLocal: (route, text) => runLocal(route, text, { gestures }),
     send,
     log,
     logError: (message) => console.error(`[friday] ${message}`),
@@ -291,12 +321,14 @@ app.whenReady().then(() => {
 
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
+  badge.create();
   listener.start();
   speech.start();
 });
 
 app.on('window-all-closed', (event) => event.preventDefault());
 app.on('before-quit', () => {
+  gestures.disable('quit');
   listener.stop();
   router.cancel();
   agent.close();

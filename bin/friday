@@ -4,6 +4,7 @@
 #   friday wake       show the HUD on a running instance
 #   friday hide       dismiss the HUD
 #   friday toggle     toggle the HUD
+#   friday gesture    turn hand gesture control on or off (bound to SUPER+ALT+G in hypr/friday.conf)
 #   friday enroll     record your voiceprint so only your voice is obeyed
 #   friday voice F    clone the voice Friday replies in from recording F
 set -euo pipefail
