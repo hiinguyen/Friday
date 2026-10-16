@@ -6,8 +6,10 @@ import { createRequire } from 'node:module';
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import rateLimit from '@fastify/rate-limit';
 import { AppError, toEnvelope, ok } from './errors.js';
 import { createLocks } from './locks.js';
+import { createAttemptLimiter } from './limits.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerExportRoutes } from './routes/export.js';
@@ -37,12 +39,17 @@ function equalToken(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function authHook(config) {
+function authHook(config, attempts) {
   return async (request) => {
     if (config.token === null) return;
+    const ip = request.ip;
+    if (attempts.blocked(ip)) throw new AppError('too_many');
     const header = request.headers.authorization ?? '';
     const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
-    if (!equalToken(provided, config.token)) throw new AppError('unauthorized');
+    if (!equalToken(provided, config.token)) {
+      attempts.fail(ip);
+      throw new AppError('unauthorized');
+    }
   };
 }
 
@@ -116,6 +123,13 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
   app.setErrorHandler(errorHandler);
   app.addHook('onRequest', originGuard(config));
 
+  // Agent routes opt in per route (see routes/agent.js); everything else is unlimited.
+  await app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: () => new AppError('too_many'),
+  });
+  const attempts = createAttemptLimiter({ max: config.authAttemptsPerMinute });
+
   app.get('/vendor/opentype.mjs', async (request, reply) => {
     const dir = path.dirname(require.resolve('opentype.js/package.json'));
     return reply.type('text/javascript').send(fs.readFileSync(path.join(dir, 'dist', 'opentype.mjs')));
@@ -131,9 +145,9 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
   // Every other API route lives in one encapsulated plugin: the hook runs for whatever
   // the router matched, so a percent-encoded or differently spelled path cannot skip it.
   await app.register(async (api) => {
-    api.addHook('onRequest', authHook(config));
-    registerProjectRoutes(api, { config, store, ingest });
-    registerAgentRoutes(api, { store, agent, locks });
+    api.addHook('onRequest', authHook(config, attempts));
+    registerProjectRoutes(api, { store, ingest });
+    registerAgentRoutes(api, { store, agent, locks, maxCallsPerMinute: config.agentCallsPerMinute });
     registerExportRoutes(api, { store, fontSet: loadFontSet() });
   }, { prefix: '/api' });
 

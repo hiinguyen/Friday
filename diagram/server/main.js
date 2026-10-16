@@ -25,7 +25,7 @@ async function main() {
   const envFile = path.join(ROOT, '.env');
   if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
   const config = loadConfig(process.env);
-  const store = createStore(config.dataDir);
+  const store = createStore(config.dataDir, { maxProjects: config.maxProjects });
   const agent = createAgent(config);
   const app = await buildApp(config, { agent, store, logger: true });
 

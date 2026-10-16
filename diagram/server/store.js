@@ -26,12 +26,21 @@ function summary(project) {
   };
 }
 
-export function createStore(dataDir) {
+export function createStore(dataDir, { maxProjects = 500 } = {}) {
   const projectsDir = path.join(dataDir, 'projects');
 
   function projectDir(id) {
     if (!ID_PATTERN.test(String(id ?? ''))) throw new AppError('not_found');
     return path.join(projectsDir, id);
+  }
+
+  async function countProjects() {
+    try {
+      const entries = await fs.readdir(projectsDir, { withFileTypes: true });
+      return entries.filter((entry) => entry.isDirectory()).length;
+    } catch {
+      return 0;
+    }
   }
 
   async function writeProject(project) {
@@ -45,6 +54,9 @@ export function createStore(dataDir) {
 
   return {
     async create({ document, source = null }) {
+      if (await countProjects() >= maxProjects) {
+        throw new AppError('bad_input', `Đã đạt giới hạn ${maxProjects} dự án. Hãy xoá bớt dự án cũ.`);
+      }
       const timestamp = nowIso();
       const project = {
         id: newId(),

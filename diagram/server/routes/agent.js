@@ -27,8 +27,10 @@ export async function runAgent(locks, agent, project, task, context) {
   }
 }
 
-export function registerAgentRoutes(app, { store, agent, locks }) {
-  app.post('/projects/:id/segment', async (request) => {
+export function registerAgentRoutes(app, { store, agent, locks, maxCallsPerMinute = 20 }) {
+  const limit = { config: { rateLimit: { max: maxCallsPerMinute, timeWindow: '1 minute' } } };
+
+  app.post('/projects/:id/segment', limit, async (request) => {
     const project = await store.get(request.params.id);
     project.answers = mergeAnswers(project.answers, request.body?.answers);
     project.pendingQuestions = null;
@@ -46,7 +48,7 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.post('/projects/:id/sections/:sid/generate', async (request) => {
+  app.post('/projects/:id/sections/:sid/generate', limit, async (request) => {
     const project = await store.get(request.params.id);
     const section = findSection(project, request.params.sid);
     project.answers = mergeAnswers(project.answers, request.body?.answers);
@@ -70,7 +72,7 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.post('/projects/:id/sections/:sid/refine', async (request) => {
+  app.post('/projects/:id/sections/:sid/refine', limit, async (request) => {
     const project = await store.get(request.params.id);
     const section = findSection(project, request.params.sid);
     const spec = request.body?.spec;

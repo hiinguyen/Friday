@@ -9,7 +9,7 @@ import { createAgent } from '../../server/agent/index.js';
 export async function makeTestApp({ env = {}, agent } = {}) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'diagram-test-'));
   const config = loadConfig({ DIAGRAM_AGENT: 'fake', DIAGRAM_DATA_DIR: dataDir, ...env });
-  const store = createStore(config.dataDir);
+  const store = createStore(config.dataDir, { maxProjects: config.maxProjects });
   const app = await buildApp(config, { agent: agent ?? createAgent(config), store });
   const inject = app.inject.bind(app);
   const defaultHost = `127.0.0.1:${config.port}`;

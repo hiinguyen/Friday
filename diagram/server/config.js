@@ -40,6 +40,9 @@ export function loadConfig(env) {
     token,
     dataDir,
     publicOrigin: publicOrigin === null ? null : publicOrigin.replace(/\/+$/, ''),
+    maxProjects: Math.floor(parsePositive(env.DIAGRAM_MAX_PROJECTS, 500, 'DIAGRAM_MAX_PROJECTS')),
+    authAttemptsPerMinute: Math.floor(parsePositive(env.DIAGRAM_AUTH_ATTEMPTS_PER_MINUTE, 10, 'DIAGRAM_AUTH_ATTEMPTS_PER_MINUTE')),
+    agentCallsPerMinute: Math.floor(parsePositive(env.DIAGRAM_AGENT_CALLS_PER_MINUTE, 20, 'DIAGRAM_AGENT_CALLS_PER_MINUTE')),
     agentTimeoutMs: parsePositive(env.DIAGRAM_AGENT_TIMEOUT_S, DEFAULT_TIMEOUT_S, 'DIAGRAM_AGENT_TIMEOUT_S') * 1000,
     claudeModel: nonEmpty(env.DIAGRAM_CLAUDE_MODEL),
     hermes: {
