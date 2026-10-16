@@ -80,5 +80,8 @@ export async function parseDocx(buffer) {
   });
   flushList();
 
-  return { blocks, title: await coreTitle(zip) };
+  // The first heading names the document better than docProps; use the metadata only when
+  // there is no heading.
+  const heading = blocks.find((block) => block.kind === 'heading');
+  return { blocks, title: heading ? heading.text : await coreTitle(zip) };
 }

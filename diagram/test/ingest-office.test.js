@@ -22,3 +22,16 @@ test('pptx gives one block per slide in presentation order', async () => {
   assert.deepEqual(doc.blocks.map((b) => b.source.slideIndex), [0, 1]);
   assert.ok(doc.blocks[0].source.slidePart.startsWith('ppt/slides/slide'));
 });
+
+test('the first slide title beats the file metadata', async () => {
+  const buffer = await buildPptx([{ title: 'Kiến trúc hệ thống', lines: ['Một dòng.'] }, { title: 'Kết luận', lines: [] }]);
+  const doc = await ingestFile({ filename: 'deck.pptx', buffer });
+  assert.equal(doc.title, 'Kiến trúc hệ thống');
+});
+
+test('the first heading beats the file metadata', async () => {
+  const buffer = await buildDocx([{ text: 'Quy trình tuyển dụng', heading: 1 }, 'Đoạn một.'], { title: 'Bản nháp nội bộ' });
+  const doc = await ingestFile({ filename: 'draft.docx', buffer });
+  assert.equal(doc.title, 'Quy trình tuyển dụng');
+});
+

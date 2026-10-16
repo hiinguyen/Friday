@@ -3,14 +3,14 @@ import PptxGenJS from 'pptxgenjs';
 
 const HEADINGS = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3, 4: HeadingLevel.HEADING_4, 5: HeadingLevel.HEADING_5, 6: HeadingLevel.HEADING_6, title: HeadingLevel.TITLE };
 
-export async function buildDocx(paragraphs) {
+export async function buildDocx(paragraphs, { title } = {}) {
   const children = paragraphs.map((p) => {
     if (typeof p === 'string') return new Paragraph(p);
     if (p.table) return new Table({ rows: p.table.map((row) => new TableRow({ children: row.map((cell) => new TableCell({ children: [new Paragraph(cell)] })) })) });
     if (p.bullet) return new Paragraph({ text: p.bullet, bullet: { level: 0 } });
     return new Paragraph({ text: p.text, heading: HEADINGS[p.heading] });
   });
-  return Packer.toBuffer(new Document({ sections: [{ children }] }));
+  return Packer.toBuffer(new Document({ ...(title ? { title } : {}), sections: [{ children }] }));
 }
 
 export async function buildPptx(slides) {

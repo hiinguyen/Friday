@@ -48,6 +48,8 @@ export async function parsePptx(buffer) {
     blocks.push({ kind: 'slide', text, source: { slidePart: part, slideIndex: index } });
   }
 
-  const title = (await coreTitle(zip)) ?? titles[0] ?? null;
+  // The first slide title is the real deck title; docProps often carries junk like
+  // "PptxGenJS Presentation". Fall back to the metadata only when no slide has text.
+  const title = titles[0] ?? (await coreTitle(zip)) ?? null;
   return { blocks, title };
 }
