@@ -67,6 +67,7 @@ export function isBlockedAddress(ip) {
 }
 
 const BLOCKED_MARKER = 'DIAGRAM_SSRF_BLOCKED';
+const BLOCKED_MESSAGE = 'Địa chỉ này trỏ vào mạng nội bộ.';
 
 function blockedLookupError() {
   return Object.assign(new Error('the address resolves into a blocked network'), { code: BLOCKED_MARKER });
@@ -157,9 +158,11 @@ export async function guardedFetch(url, {
   maxRedirects = 3,
 } = {}) {
   const guard = dispatcher ?? createGuardDispatcher(lookup);
+  const deadline = AbortSignal.timeout(timeoutMs);
   try {
     let current = url;
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
+      if (deadline.aborted) throw new AppError('url_failed', 'Hết thời gian tải trang.');
       let parsed;
       try {
         parsed = new URL(current);
@@ -175,23 +178,25 @@ export async function guardedFetch(url, {
         try {
           addresses = await lookup(parsed.hostname, { all: true, order: 'ipv4first' });
         } catch (error) {
-          throw new AppError('url_failed', undefined, { detail: error.message });
+          // A name that does not resolve is refused like a blocked one, so the client cannot
+          // tell the two apart and use that as an SSRF oracle.
+          throw new AppError('url_blocked', BLOCKED_MESSAGE, { detail: error.message });
         }
       }
       if (!Array.isArray(addresses) || addresses.length === 0 || addresses.some((entry) => isBlockedAddress(entry.address))) {
-        throw new AppError('url_blocked', 'Địa chỉ này trỏ vào mạng nội bộ.');
+        throw new AppError('url_blocked', BLOCKED_MESSAGE);
       }
 
       let response;
       try {
         response = await fetchImpl(current, {
           redirect: 'manual',
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: deadline,
           dispatcher: guard,
           headers: { 'user-agent': 'DiagramStudio/0.1', accept: 'text/html,text/plain;q=0.9' },
         });
       } catch (error) {
-        if (isBlockedLookupError(error)) throw new AppError('url_blocked', 'Địa chỉ này trỏ vào mạng nội bộ.');
+        if (isBlockedLookupError(error)) throw new AppError('url_blocked', BLOCKED_MESSAGE);
         throw new AppError('url_failed', undefined, { detail: error?.message ?? 'network error' });
       }
 

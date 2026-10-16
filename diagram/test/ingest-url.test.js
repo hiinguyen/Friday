@@ -58,6 +58,28 @@ test('a connection that re-resolves to a blocked address is refused (DNS rebindi
   assert.ok(calls >= 2, `the connection-time lookup ran ${calls} time(s)`);
 });
 
+test('a name that does not resolve is refused exactly like a blocked address', async () => {
+  const failing = async () => { throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }); };
+  const capture = async (promise) => promise.then(() => null, (error) => error);
+  const dnsFailure = await capture(guardedFetch('http://nope.example/', { lookup: failing, fetchImpl: async () => html('x') }));
+  const blocked = await capture(guardedFetch('http://127.0.0.1/', { fetchImpl: async () => html('x') }));
+  assert.ok(dnsFailure && blocked);
+  assert.equal(dnsFailure.code, blocked.code);
+  assert.equal(dnsFailure.message, blocked.message);
+});
+
+test('one deadline covers every redirect hop', async () => {
+  const signals = [];
+  const fetchImpl = async (url, init) => {
+    signals.push(init.signal);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return new Response('', { status: 302, headers: { location: `http://a.example/hop${signals.length}` } });
+  };
+  await assert.rejects(guardedFetch('http://a.example/', { lookup: PUBLIC, fetchImpl, timeoutMs: 50 }), { code: 'url_failed' });
+  assert.ok(signals.length >= 1);
+  assert.ok(signals.every((signal) => signal === signals[0]), 'every hop shares one deadline signal');
+});
+
 test('extracts the article into blocks', async () => {
   const page = `<!doctype html><html><head><title>Trang thử</title></head><body><nav>Menu</nav><article>
     <h1>Quy trình tuyển dụng</h1><p>Công ty tuyển dụng qua bốn bước rõ ràng, mỗi bước có người phụ trách riêng và thời hạn cụ thể.</p>
