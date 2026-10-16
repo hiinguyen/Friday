@@ -6,8 +6,12 @@ import flowchart from './templates/flowchart.js';
 import cycle from './templates/cycle.js';
 import tree from './templates/tree.js';
 import mindmap from './templates/mindmap.js';
+import compare from './templates/compare.js';
+import funnel from './templates/funnel.js';
+import pyramid from './templates/pyramid.js';
+import venn from './templates/venn.js';
 
-export const TEMPLATES = [cards, iconRow, timeline, steps, flowchart, cycle, tree, mindmap];
+export const TEMPLATES = [cards, iconRow, timeline, steps, flowchart, cycle, tree, mindmap, compare, funnel, pyramid, venn];
 export const TEMPLATE_IDS = TEMPLATES.map((t) => t.id);
 export const TEMPLATE_KINDS = [...new Set(TEMPLATES.map((t) => t.kind))];
 
