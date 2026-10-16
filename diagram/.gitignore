@@ -3,3 +3,4 @@ data/
 test-results/
 playwright-report/
 test/golden/preview/
+e2e/fixtures/
