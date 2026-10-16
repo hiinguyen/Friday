@@ -51,10 +51,7 @@ export default {
     const branches = centreNode ? childrenOf(spec, centreNode.id) : rootList;
     const baseDepth = centreNode ? depthOf(spec, centreNode.id) : -1;
 
-    const half = Math.ceil(branches.length / 2);
-    const sides = { right: branches.slice(0, half), left: branches.slice(half) };
-
-    const blockFor = (branch) => {
+    const blockFor = (branch, index) => {
       const leaves = descendantIds(spec, branch.id).map((id) => {
         const depth = depthOf(spec, id) - baseDepth;
         const indent = INDENT * Math.max(0, depth - 2);
@@ -63,11 +60,23 @@ export default {
       const leafHeights = leaves.map((leaf) => boxHeight(ctx, leaf.node, leaf.width));
       const leavesTotal = leafHeights.reduce((sum, value) => sum + value, 0) + (gap / 2) * Math.max(0, leaves.length - 1);
       const branchHeight = boxHeight(ctx, branch, BRANCH_WIDTH);
-      return { branch, leaves, leafHeights, branchHeight, height: Math.max(branchHeight, leavesTotal) };
+      return { branch, leaves, leafHeights, branchHeight, height: Math.max(branchHeight, leavesTotal), index };
     };
-    const build = (list) => list.map(blockFor);
-    const rightBlocks = build(sides.right);
-    const leftBlocks = build(sides.left);
+
+    // Balance the two sides by block height: tallest block first, each one goes to the
+    // currently shorter side; original branch order is restored inside each side.
+    const sorted = branches.map(blockFor).sort((a, b) => b.height - a.height || a.index - b.index);
+    const sides = { left: [], right: [] };
+    const loads = { left: 0, right: 0 };
+    for (const block of sorted) {
+      const side = loads.left <= loads.right ? 'left' : 'right';
+      sides[side].push(block);
+      loads[side] += block.height + gap;
+    }
+    sides.left.sort((a, b) => a.index - b.index);
+    sides.right.sort((a, b) => a.index - b.index);
+    const rightBlocks = sides.right;
+    const leftBlocks = sides.left;
 
     const extent = (blocks) => {
       if (blocks.length === 0) return 0;

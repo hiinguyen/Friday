@@ -5,6 +5,7 @@ import { getTemplate } from '../shared/render/registry.js';
 import { renderSpec } from '../shared/render/render.js';
 import { sampleSpec } from './helpers/samples.js';
 import { makeNodes, makeSpec } from './helpers/specs.js';
+import { descendantIds } from '../shared/spec/tree.js';
 
 const fonts = loadFontSet();
 const render = (spec) => renderSpec(spec, { fontSet: fonts }).scene;
@@ -101,4 +102,26 @@ test('mindmap puts branches on both sides of the root', () => {
 test('mindmap with several roots uses a synthetic centre without a hit box', () => {
   const scene = render(makeSpec({ template: 'mindmap', title: 'Trung tâm', nodes: makeNodes(4) }));
   assert.equal(Object.keys(scene.nodes).length, 4);
+});
+
+const branchExtent = (scene, spec, id) => {
+  const boxes = [id, ...descendantIds(spec, id)].map((nodeId) => scene.nodes[nodeId]);
+  return Math.max(...boxes.map((b) => b.y + b.h)) - Math.min(...boxes.map((b) => b.y));
+};
+
+test('mindmap balances branch blocks across the two sides', () => {
+  const spec = sampleSpec(getTemplate('mindmap'), 15, { long: true });
+  const scene = render(spec);
+  const branchIds = spec.nodes.filter((n) => n.parent === 'n1').map((n) => n.id);
+  assert.ok(branchIds.length >= 3);
+  const root = scene.nodes.n1;
+  const centre = root.x + root.w / 2;
+  const sideOf = (id) => (scene.nodes[id].x + scene.nodes[id].w / 2 >= centre ? 'right' : 'left');
+  const extent = (side) => {
+    const ids = branchIds.filter((id) => sideOf(id) === side).flatMap((id) => [id, ...descendantIds(spec, id)]);
+    const boxes = ids.map((id) => scene.nodes[id]);
+    return Math.max(...boxes.map((b) => b.y + b.h)) - Math.min(...boxes.map((b) => b.y));
+  };
+  const tallest = Math.max(...branchIds.map((id) => branchExtent(scene, spec, id)));
+  assert.ok(Math.abs(extent('left') - extent('right')) <= tallest, `unbalanced: left ${extent('left')} vs right ${extent('right')}, tallest ${tallest}`);
 });
