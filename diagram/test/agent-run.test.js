@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgent } from '../server/agent/index.js';
 import { createFakeAdapter } from '../server/agent/fake.js';
-import { ingestText } from '../server/ingest/index.js';
+import { ingestText, ingestFile } from '../server/ingest/index.js';
 import { loadConfig } from '../server/config.js';
+import { buildPptx } from './helpers/office.js';
 
 const config = { ...loadConfig({ DIAGRAM_AGENT: 'fake' }), agentTimeoutMs: 2000 };
 const signal = () => new AbortController().signal;
@@ -19,8 +20,19 @@ test('fake segment asks first, then answers with sections', async () => {
   assert.equal(second.sections.length, 2);
 });
 
-test('fake generate returns three valid candidates', async () => {
-  const document = ingestText('Nghiên cứu khách hàng.\nThiết kế giải pháp.\nPhát triển sản phẩm.\nRa mắt.');
+test('a pptx deck becomes one section per slide', async () => {
+  const buffer = await buildPptx([
+    { title: 'Tổng quan', lines: ['Giới thiệu sản phẩm.'] },
+    { title: 'Kế hoạch', lines: ['Ba giai đoạn chính.'] },
+    { title: 'Ngân sách', lines: ['Chi phí dự kiến.'] },
+  ]);
+  const document = await ingestFile({ filename: 'deck.pptx', buffer });
+  const out = await createFakeAdapter().run({ task: 'segment', user: JSON.stringify({ document, answers: [] }), signal: signal() });
+  assert.equal(out.sections.length, 3);
+  assert.deepEqual(out.sections.map((section) => section.title), ['Tổng quan', 'Kế hoạch', 'Ngân sách']);
+});
+
+test('fake generate returns three valid candidates', async () => {  const document = ingestText('Nghiên cứu khách hàng.\nThiết kế giải pháp.\nPhát triển sản phẩm.\nRa mắt.');
   const section = { id: 's1', blockIds: ['b0'], title: 'Quy trình', summary: '', suggestedKinds: [] };
   const out = await createAgent(config).run('generate', { document, section, answers: [] }, { signal: signal() });
   assert.deepEqual(out.candidates.map((c) => c.template), ['steps', 'cards', 'timeline']);

@@ -45,17 +45,20 @@ function fakeSegment(payload) {
   }
   const groups = [];
   for (const block of blocks) {
-    if (groups.length === 0 || block.kind === 'heading') groups.push([]);
+    if (groups.length === 0 || block.kind === 'heading' || block.kind === 'slide') groups.push([]);
     groups[groups.length - 1].push(block);
   }
   const sections = groups
     .filter((group) => !(group.length === 1 && group[0].kind === 'heading'))
-    .map((group) => ({
-      blockIds: group.map((block) => block.id),
-      title: group[0].text.slice(0, 40),
-      summary: '',
-      suggestedKinds: ['list'],
-    }));
+    .map((group) => {
+      const first = group[0];
+      return {
+        blockIds: group.map((block) => block.id),
+        title: (first.kind === 'slide' ? first.text.split('\n')[0] : first.text).slice(0, 40),
+        summary: '',
+        suggestedKinds: ['list'],
+      };
+    });
   return { questions: [], sections };
 }
 
