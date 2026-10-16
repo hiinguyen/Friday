@@ -56,6 +56,25 @@ test('flowchart without edges chains the nodes in order', () => {
   assert.equal(arrows(scene).length, 3);
 });
 
+test('flowchart lays a long simple chain out as a serpentine, not a tall column', () => {
+  const implicit = makeSpec({ template: 'flowchart', nodes: makeNodes(12), edges: [] });
+  const explicit = { ...implicit, edges: Array.from({ length: 11 }, (_, i) => ({ from: `n${i + 1}`, to: `n${i + 2}`, label: '' })) };
+  for (const [name, spec] of [['implicit', implicit], ['explicit', explicit]]) {
+    const scene = render(spec);
+    assert.ok(scene.height < 1.5 * scene.width, `${name}: ${scene.width}x${scene.height} is still a column`);
+    assert.equal(arrows(scene).length, spec.nodes.length - 1, name);
+    const boxes = Object.values(scene.nodes);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const overlap = a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5;
+        assert.ok(!overlap, `${name}: node hit boxes overlap`);
+      }
+    }
+  }
+});
+
 test('cycle closes the loop', () => {
   const scene = render(sampleSpec(getTemplate('cycle'), 5));
   assert.equal(arrows(scene).length, 5);
