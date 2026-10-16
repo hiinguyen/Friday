@@ -139,6 +139,26 @@ test('tree puts children below their parent', () => {
   }
 });
 
+test('a wide tree grows downwards instead of sideways', () => {
+  const tree = getTemplate('tree');
+  for (const long of [false, true]) {
+    const spec = sampleSpec(tree, tree.maxNodes, { long });
+    const scene = render(spec);
+    assert.ok(scene.width < 2.5 * scene.height, `long=${long}: ${scene.width}x${scene.height} is too wide`);
+    const boxes = Object.entries(scene.nodes);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i][1];
+        const b = boxes[j][1];
+        const overlap = a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5;
+        assert.ok(!overlap, `long=${long}: nodes ${boxes[i][0]} and ${boxes[j][0]} overlap`);
+      }
+    }
+    const connectors = scene.items.filter((item) => item.type === 'path' && item.role === 'connector');
+    assert.equal(connectors.length, spec.nodes.filter((node) => node.parent).length, `long=${long}: one connector per child`);
+  }
+});
+
 test('mindmap puts branches on both sides of the root', () => {
   const spec = sampleSpec(getTemplate('mindmap'), 9);
   const scene = render(spec);
