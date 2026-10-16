@@ -38,6 +38,16 @@ test('rejects bodies over the size cap and non-text content', async () => {
   await assert.rejects(guardedFetch('http://a.example/', { lookup: PUBLIC, fetchImpl: pdf }), { code: 'url_failed' });
 });
 
+test('a connection that re-resolves to a blocked address is refused (DNS rebinding)', async () => {
+  let calls = 0;
+  const lookup = async () => {
+    calls += 1;
+    return calls === 1 ? [{ address: '93.184.216.34', family: 4 }] : [{ address: '127.0.0.1', family: 4 }];
+  };
+  await assert.rejects(guardedFetch('http://rebind.example/', { lookup }), { code: 'url_blocked' });
+  assert.ok(calls >= 2, `the connection-time lookup ran ${calls} time(s)`);
+});
+
 test('extracts the article into blocks', async () => {
   const page = `<!doctype html><html><head><title>Trang thử</title></head><body><nav>Menu</nav><article>
     <h1>Quy trình tuyển dụng</h1><p>Công ty tuyển dụng qua bốn bước rõ ràng, mỗi bước có người phụ trách riêng và thời hạn cụ thể.</p>
