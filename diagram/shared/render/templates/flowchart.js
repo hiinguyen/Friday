@@ -5,6 +5,18 @@ const BOX_WIDTH = 180;
 const ICON_SIZE = 22;
 const ICON_GAP = 6;
 const CHAIN_COLUMNS = 4;
+// A band holds at most four dagre ranks; extra ranks stack in a new band below.
+const BAND_RANKS = 4;
+// Normalised 16:9 export frame. The layout whose scene fits it at the largest scale wins.
+const FRAME = { width: 16, height: 9 };
+
+function fitScale(scene) {
+  return Math.min(FRAME.width / scene.width, FRAME.height / scene.height);
+}
+
+function bestScene(candidates) {
+  return candidates.reduce((best, scene) => (fitScale(scene) > fitScale(best) ? scene : best));
+}
 
 function implicitChain(nodes) {
   const edges = [];
@@ -155,6 +167,178 @@ function buildGraph(nodes, edges, rankdir, gap, sizes) {
   return g;
 }
 
+function edgeLabelItems(ctx, label, mid, items) {
+  if (!label) return;
+  const text = textItem(ctx, label, { x: mid.x, y: mid.y - 8, width: 120, style: 'small', maxLines: 2, anchor: 'middle', fill: 'mutedText' });
+  if (!text.item) return;
+  const measured = Math.max(...text.item.lines.map((line) => ctx.fontSet.measure(line, text.item.size, text.item.weight)));
+  items.push({ type: 'rect', x: mid.x - measured / 2 - 4, y: text.item.y - 2, w: measured + 8, h: text.height + 4, fill: 'background', stroke: 'none', role: 'decoration' });
+  items.push(text.item);
+}
+
+// Plain dagre layout, used as one candidate (LR and TB are tried).
+function layoutDagre(spec, ctx, edges, rankdir) {
+  const { gap } = ctx.density;
+  const sizes = new Map(spec.nodes.map((node) => [node.id, boxHeight(ctx, node, BOX_WIDTH)]));
+  const graph = buildGraph(spec.nodes, edges, rankdir, gap, sizes);
+  const graphW = graph.graph().width;
+  const contentW = Math.max(CONTENT_WIDTH, graphW);
+  const width = Math.max(CANVAS_WIDTH, contentW + 2 * MARGIN);
+  const head = titleBlock(spec, ctx, { width });
+  const items = [...head.items];
+  const nodes = {};
+  const offsetX = MARGIN + (contentW - graphW) / 2;
+  const offsetY = head.bottom;
+  let bottom = head.bottom;
+
+  const placed = spec.nodes.map((node, index) => {
+    const gNode = graph.node(node.id);
+    return { node, x: gNode.x - BOX_WIDTH / 2 + offsetX, y: gNode.y - sizes.get(node.id) / 2 + offsetY, index };
+  });
+
+  for (const edge of edges) {
+    if (edge.from === edge.to) continue;
+    const ge = graph.edge(edge.from, edge.to);
+    if (!ge || !ge.points || ge.points.length < 2) continue;
+    const pts = ge.points.map((p) => ({ x: p.x + offsetX, y: p.y + offsetY }));
+    const lastIndex = pts.length - 1;
+    const last = pts[lastIndex];
+    const prev = pts[lastIndex - 1];
+    const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+    const end = { x: last.x - 2 * Math.cos(angle), y: last.y - 2 * Math.sin(angle) };
+    pts[lastIndex] = end;
+    const d = `M${pts.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('L')}`;
+    items.push(pathItem(d, pts, { stroke: 'stroke', strokeWidth: 2 }));
+    if (edge.label) {
+      const mid = pts[Math.floor(pts.length / 2)];
+      edgeLabelItems(ctx, edge.label, mid, items);
+    }
+    items.push(arrowHead(end.x, end.y, angle));
+  }
+
+  for (const { node, x, y, index } of placed) {
+    const accent = node.color ?? slotFor(index);
+    const box = nodeBox(ctx, node, { x, y, width: BOX_WIDTH, fill: boxFill(node, accent), accent, onFill: node.emphasis });
+    items.push(...box.items);
+    nodes[node.id] = { x, y, w: BOX_WIDTH, h: box.height };
+    bottom = Math.max(bottom, y + box.height);
+  }
+
+  return finishScene({ width, items, nodes, bottom });
+}
+
+// Banded layout: dagre's LR ranks split into consecutive bands of at most BAND_RANKS ranks.
+// Each band lays its ranks left to right; bands stack top to bottom. Edges that leave a
+// column run orthogonally through the gap between bands, so nothing crosses a box.
+function layoutBanded(spec, ctx, edges) {
+  const { gap } = ctx.density;
+  const bandGap = gap * 2;
+  const sizes = new Map(spec.nodes.map((node) => [node.id, boxHeight(ctx, node, BOX_WIDTH)]));
+  const graph = buildGraph(spec.nodes, edges, 'LR', gap, sizes);
+  const rawRankOf = new Map(spec.nodes.map((node) => [node.id, graph.node(node.id).rank]));
+  // dagre leaves gaps between rank numbers; normalise them to 0..k-1 so bands and columns are tight.
+  const orderedRanks = [...new Set(rawRankOf.values())].sort((a, b) => a - b);
+  const rankIndex = new Map(orderedRanks.map((rank, index) => [rank, index]));
+  const rankOf = new Map(spec.nodes.map((node) => [node.id, rankIndex.get(rawRankOf.get(node.id))]));
+  const maxRank = Math.max(0, ...rankOf.values());
+
+  const bands = [];
+  for (let start = 0; start <= maxRank; start += BAND_RANKS) {
+    const end = Math.min(maxRank, start + BAND_RANKS - 1);
+    const ranks = [];
+    for (let rank = start; rank <= end; rank += 1) {
+      const ids = spec.nodes.filter((node) => rankOf.get(node.id) === rank).map((node) => node.id);
+      const height = ids.length === 0 ? 0 : ids.reduce((sum, id) => sum + sizes.get(id), 0) + gap * (ids.length - 1);
+      ranks.push({ rank, ids, height });
+    }
+    const height = Math.max(0, ...ranks.map((entry) => entry.height));
+    const used = ranks.filter((entry) => entry.ids.length > 0);
+    const columns = used.length === 0 ? 0 : used[used.length - 1].rank - start + 1;
+    const width = columns === 0 ? 0 : columns * BOX_WIDTH + (columns - 1) * gap;
+    bands.push({ start, ranks, height, width });
+  }
+
+  const contentW = Math.max(CONTENT_WIDTH, ...bands.map((band) => band.width));
+  const width = Math.max(CANVAS_WIDTH, contentW + 2 * MARGIN);
+  const head = titleBlock(spec, ctx, { width });
+  const items = [...head.items];
+
+  const boxes = new Map();
+  const bandOf = new Map();
+  let cursor = head.bottom;
+  bands.forEach((band, index) => {
+    band.top = cursor;
+    band.bottom = cursor + band.height;
+    const left = MARGIN + (contentW - band.width) / 2;
+    for (const rank of band.ranks) {
+      let y = cursor + (band.height - rank.height) / 2;
+      for (const id of rank.ids) {
+        boxes.set(id, { x: left + (rank.rank - band.start) * (BOX_WIDTH + gap), y, w: BOX_WIDTH, h: sizes.get(id) });
+        bandOf.set(id, index);
+        y += sizes.get(id) + gap;
+      }
+    }
+    cursor += band.height + bandGap;
+  });
+  const bottom = cursor - bandGap;
+
+  for (const edge of edges) {
+    if (edge.from === edge.to) continue;
+    const a = boxes.get(edge.from);
+    const b = boxes.get(edge.to);
+    if (!a || !b) continue;
+    const ba = bandOf.get(edge.from);
+    const bb = bandOf.get(edge.to);
+    const sx = a.x + BOX_WIDTH / 2;
+    const tx = b.x + BOX_WIDTH / 2;
+    let points;
+    if (ba === bb) {
+      const rankA = rankOf.get(edge.from);
+      const rankB = rankOf.get(edge.to);
+      if (Math.abs(rankA - rankB) === 1) {
+        points = a.x < b.x
+          ? [{ x: a.x + BOX_WIDTH, y: a.y + a.h / 2 }, { x: b.x, y: b.y + b.h / 2 }]
+          : [{ x: a.x, y: a.y + a.h / 2 }, { x: b.x + BOX_WIDTH, y: b.y + b.h / 2 }];
+      } else {
+        const channelY = bands[ba].bottom + bandGap * 0.35;
+        points = [{ x: sx, y: a.y + a.h }, { x: sx, y: channelY }, { x: tx, y: channelY }, { x: tx, y: b.y + b.h }];
+      }
+    } else if (ba < bb) {
+      const channelY = bands[ba].bottom + bandGap / 2;
+      points = [{ x: sx, y: a.y + a.h }, { x: sx, y: channelY }, { x: tx, y: channelY }, { x: tx, y: b.y }];
+    } else {
+      const channelY = bands[ba].top - bandGap / 2;
+      points = [{ x: sx, y: a.y }, { x: sx, y: channelY }, { x: tx, y: channelY }, { x: tx, y: b.y + b.h }];
+    }
+    const clean = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y);
+    const last = clean[clean.length - 1];
+    const prev = clean[clean.length - 2];
+    const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+    const tip = { x: last.x - 2 * Math.cos(angle), y: last.y - 2 * Math.sin(angle) };
+    const line = [...clean.slice(0, -1), tip];
+    const d = `M${line.map((point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join('L')}`;
+    items.push(pathItem(d, line, { stroke: 'stroke', strokeWidth: 2 }));
+    if (edge.label) {
+      const middle = clean.length === 2
+        ? { x: (clean[0].x + clean[1].x) / 2, y: (clean[0].y + clean[1].y) / 2 }
+        : { x: (clean[1].x + clean[2].x) / 2, y: (clean[1].y + clean[2].y) / 2 };
+      edgeLabelItems(ctx, edge.label, middle, items);
+    }
+    items.push(arrowHead(tip.x, tip.y, angle));
+  }
+
+  const nodes = {};
+  spec.nodes.forEach((node, index) => {
+    const box = boxes.get(node.id);
+    const accent = node.color ?? slotFor(index);
+    const rendered = nodeBox(ctx, node, { x: box.x, y: box.y, width: BOX_WIDTH, fill: boxFill(node, accent), accent, onFill: node.emphasis });
+    items.push(...rendered.items);
+    nodes[node.id] = { x: box.x, y: box.y, w: BOX_WIDTH, h: rendered.height };
+  });
+
+  return finishScene({ width, items, nodes, bottom });
+}
+
 export default {
   id: 'flowchart',
   kind: 'relationship',
@@ -168,59 +352,11 @@ export default {
   layout(spec, ctx) {
     const chain = chainOrder(spec.nodes, spec.edges);
     if (chain) return layoutChain(spec, ctx, chain);
-    const { gap } = ctx.density;
     const edges = spec.edges.length > 0 ? spec.edges : implicitChain(spec.nodes);
-    const sizes = new Map(spec.nodes.map((node) => [node.id, boxHeight(ctx, node, BOX_WIDTH)]));
-    let graph = buildGraph(spec.nodes, edges, 'LR', gap, sizes);
-    if (graph.graph().width > CONTENT_WIDTH) graph = buildGraph(spec.nodes, edges, 'TB', gap, sizes);
-    const graphW = graph.graph().width;
-    const contentW = Math.max(CONTENT_WIDTH, graphW);
-    const width = Math.max(CANVAS_WIDTH, contentW + 2 * MARGIN);
-    const head = titleBlock(spec, ctx, { width });
-    const items = [...head.items];
-    const nodes = {};
-    const offsetX = MARGIN + (contentW - graphW) / 2;
-    const offsetY = head.bottom;
-    let bottom = head.bottom;
-
-    const placed = spec.nodes.map((node, index) => {
-      const gNode = graph.node(node.id);
-      return { node, x: gNode.x - BOX_WIDTH / 2 + offsetX, y: gNode.y - sizes.get(node.id) / 2 + offsetY, index };
-    });
-
-    for (const edge of edges) {
-      if (edge.from === edge.to) continue;
-      const ge = graph.edge(edge.from, edge.to);
-      if (!ge || !ge.points || ge.points.length < 2) continue;
-      const pts = ge.points.map((p) => ({ x: p.x + offsetX, y: p.y + offsetY }));
-      const lastIndex = pts.length - 1;
-      const last = pts[lastIndex];
-      const prev = pts[lastIndex - 1];
-      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
-      const end = { x: last.x - 2 * Math.cos(angle), y: last.y - 2 * Math.sin(angle) };
-      pts[lastIndex] = end;
-      const d = `M${pts.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('L')}`;
-      items.push(pathItem(d, pts, { stroke: 'stroke', strokeWidth: 2 }));
-      if (edge.label) {
-        const mid = pts[Math.floor(pts.length / 2)];
-        const label = textItem(ctx, edge.label, { x: mid.x, y: mid.y - 8, width: 120, style: 'small', maxLines: 2, anchor: 'middle', fill: 'mutedText' });
-        if (label.item) {
-          const measured = Math.max(...label.item.lines.map((line) => ctx.fontSet.measure(line, label.item.size, label.item.weight)));
-          items.push({ type: 'rect', x: mid.x - measured / 2 - 4, y: label.item.y - 2, w: measured + 8, h: label.height + 4, fill: 'background', stroke: 'none', role: 'decoration' });
-          items.push(label.item);
-        }
-      }
-      items.push(arrowHead(end.x, end.y, angle));
-    }
-
-    for (const { node, x, y, index } of placed) {
-      const accent = node.color ?? slotFor(index);
-      const box = nodeBox(ctx, node, { x, y, width: BOX_WIDTH, fill: boxFill(node, accent), accent, onFill: node.emphasis });
-      items.push(...box.items);
-      nodes[node.id] = { x, y, w: BOX_WIDTH, h: box.height };
-      bottom = Math.max(bottom, y + box.height);
-    }
-
-    return finishScene({ width, items, nodes, bottom });
+    return bestScene([
+      layoutDagre(spec, ctx, edges, 'LR'),
+      layoutDagre(spec, ctx, edges, 'TB'),
+      layoutBanded(spec, ctx, edges),
+    ]);
   },
 };

@@ -52,6 +52,55 @@ test('flowchart draws one arrow per edge', () => {
   assert.equal(arrows(render(spec)).length, spec.edges.length);
 });
 
+const pathPoints = (item) => [...item.d.match(/[ML](-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)]
+  .map((token) => token.slice(1).split(' ').map(Number))
+  .map(([x, y]) => ({ x, y }));
+
+const insideBox = (point, box, eps = 0.75) => point.x > box.x + eps && point.x < box.x + box.w - eps
+  && point.y > box.y + eps && point.y < box.y + box.h - eps;
+
+function assertProportionalFlowchart(spec) {
+  const scene = render(spec);
+  assert.ok(scene.height < 1.5 * scene.width, `too tall: ${scene.width}x${scene.height}`);
+  assert.ok(scene.width < 2.5 * scene.height, `too wide: ${scene.width}x${scene.height}`);
+  assert.equal(arrows(scene).length, spec.edges.length, 'one arrowhead per edge');
+
+  const boxes = Object.entries(scene.nodes);
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i][1];
+      const b = boxes[j][1];
+      const overlap = a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5;
+      assert.ok(!overlap, `nodes ${boxes[i][0]} and ${boxes[j][0]} overlap`);
+    }
+  }
+
+  const lines = scene.items.filter((item) => item.type === 'path' && item.role === 'connector' && item.fill === 'none');
+  for (const line of lines) {
+    const points = pathPoints(line);
+    for (let s = 0; s < points.length - 1; s += 1) {
+      for (let step = 1; step < 10; step += 1) {
+        const t = step / 10;
+        const point = { x: points[s].x + (points[s + 1].x - points[s].x) * t, y: points[s].y + (points[s + 1].y - points[s].y) * t };
+        for (const [id, box] of boxes) {
+          assert.ok(!insideBox(point, box), `connector crosses node ${id} at ${point.x.toFixed(1)},${point.y.toFixed(1)}`);
+        }
+      }
+    }
+  }
+}
+
+test('a branching flowchart stays proportional instead of becoming a column', () => {
+  const nodes = makeNodes(12);
+  const edges = [
+    { from: 'n1', to: 'n2', label: '' }, { from: 'n1', to: 'n3', label: '' },
+    { from: 'n2', to: 'n4', label: '' }, { from: 'n3', to: 'n4', label: '' },
+    ...Array.from({ length: 8 }, (_, i) => ({ from: `n${i + 4}`, to: `n${i + 5}`, label: '' })),
+  ];
+  assertProportionalFlowchart(makeSpec({ template: 'flowchart', nodes, edges }));
+  assertProportionalFlowchart(sampleSpec(getTemplate('flowchart'), 12));
+});
+
 test('flowchart without edges chains the nodes in order', () => {
   const scene = render(makeSpec({ template: 'flowchart', nodes: makeNodes(4), edges: [] }));
   assert.equal(arrows(scene).length, 3);
