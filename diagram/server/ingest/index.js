@@ -3,6 +3,7 @@ import { AppError } from '../errors.js';
 import { parsePlainText, parseMarkdown } from './text.js';
 import { parseDocx } from './docx.js';
 import { parsePptx } from './pptx.js';
+import { loadUrl } from './url.js';
 
 function deriveTitle(blocks) {
   const heading = blocks.find((block) => block.kind === 'heading');
@@ -26,6 +27,11 @@ export function buildDocument(blocks, { format, title = null, url = null } = {})
 
 export function ingestText(text) {
   return buildDocument(parsePlainText(text), { format: 'text' });
+}
+
+export async function ingestUrl(url, deps = {}) {
+  const { blocks, title, url: finalUrl } = await loadUrl(url, deps);
+  return buildDocument(blocks, { format: 'url', title, url: finalUrl });
 }
 
 export async function ingestFile({ filename, buffer }) {
