@@ -1,6 +1,9 @@
 import cards from './templates/cards.js';
+import iconRow from './templates/icon-row.js';
+import timeline from './templates/timeline.js';
+import steps from './templates/steps.js';
 
-export const TEMPLATES = [cards];
+export const TEMPLATES = [cards, iconRow, timeline, steps];
 export const TEMPLATE_IDS = TEMPLATES.map((t) => t.id);
 export const TEMPLATE_KINDS = [...new Set(TEMPLATES.map((t) => t.kind))];
 
