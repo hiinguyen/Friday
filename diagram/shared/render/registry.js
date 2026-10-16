@@ -2,8 +2,12 @@ import cards from './templates/cards.js';
 import iconRow from './templates/icon-row.js';
 import timeline from './templates/timeline.js';
 import steps from './templates/steps.js';
+import flowchart from './templates/flowchart.js';
+import cycle from './templates/cycle.js';
+import tree from './templates/tree.js';
+import mindmap from './templates/mindmap.js';
 
-export const TEMPLATES = [cards, iconRow, timeline, steps];
+export const TEMPLATES = [cards, iconRow, timeline, steps, flowchart, cycle, tree, mindmap];
 export const TEMPLATE_IDS = TEMPLATES.map((t) => t.id);
 export const TEMPLATE_KINDS = [...new Set(TEMPLATES.map((t) => t.kind))];
 
