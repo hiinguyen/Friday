@@ -90,3 +90,29 @@ test('extracts the article into blocks', async () => {
   assert.ok(doc.blocks.some((b) => b.kind === 'list' && b.text.includes('- Phỏng vấn')));
   assert.ok(!doc.blocks.some((b) => b.text.includes('Menu')));
 });
+
+test('IPv4-translated, site-local, discard and Teredo addresses are blocked', () => {
+  for (const ip of ['::ffff:0:7f00:1', '::ffff:0:127.0.0.1', '::ffff:0:a9fe:a9fe', 'fec0::1', '100::1', '2001::1']) {
+    assert.equal(isBlockedAddress(ip), true, ip);
+  }
+  assert.equal(isBlockedAddress('2606:4700::1111'), false);
+});
+
+test('an IPv6 literal host is checked as an address, never sent to DNS', async () => {
+  const asked = [];
+  const lookup = async (host) => { asked.push(host); return [{ address: '93.184.216.34', family: 4 }]; };
+  const fetchImpl = async () => html('<p>never</p>');
+  await assert.rejects(guardedFetch('http://[::1]/', { lookup, fetchImpl }), { code: 'url_blocked' });
+  await assert.rejects(guardedFetch('http://[::ffff:127.0.0.1]/', { lookup, fetchImpl }), { code: 'url_blocked' });
+  assert.deepEqual(asked, []);
+});
+
+test('a body that times out becomes url_failed, not an internal error', async () => {
+  const stalled = async (url, init) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('<p>'));
+      init.signal.addEventListener('abort', () => controller.error(init.signal.reason));
+    },
+  }), { status: 200, headers: { 'content-type': 'text/html' } });
+  await assert.rejects(guardedFetch('http://a.example/', { lookup: PUBLIC, fetchImpl: stalled, timeoutMs: 50 }), { code: 'url_failed' });
+});

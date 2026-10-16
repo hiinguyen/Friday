@@ -12,13 +12,14 @@ for (const [address, prefix, type] of [
   ['255.255.255.255', 32, 'ipv4'],
   ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
   ['::', 96, 'ipv6'], ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'], ['2002::', 16, 'ipv6'],
-  ['2001:db8::', 32, 'ipv6'],
+  ['2001:db8::', 32, 'ipv6'], ['fec0::', 10, 'ipv6'], ['100::', 64, 'ipv6'], ['2001::', 32, 'ipv6'],
 ]) {
   blocked.addSubnet(address, prefix, type);
 }
 
-// NAT64 (64:ff9b::/96 and 64:ff9b:1::/48), 6to4 (2002::/16) and IPv4-compatible (::/96)
-// carry an IPv4 address inside the IPv6 one; block it when that embedded address is blocked.
+// NAT64 (64:ff9b::/96 and 64:ff9b:1::/48), 6to4 (2002::/16), IPv4-compatible (::/96),
+// IPv4-mapped (::ffff:0:0/96) and IPv4-translated (::ffff:0:0:0/96) carry an IPv4 address
+// inside the IPv6 one; block it when that embedded address is blocked.
 function embeddedIPv4(ip) {
   const [head, tail] = ip.split('::');
   const parse = (text) => {
@@ -47,9 +48,9 @@ function embeddedIPv4(ip) {
   const quad = (high, low) => `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
   if (groups[0] === 0x0064 && groups[1] === 0xff9b) return quad(groups[6], groups[7]);
   if (groups[0] === 0x2002) return quad(groups[1], groups[2]);
-  if (groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0) {
-    return quad(groups[6], groups[7]);
-  }
+  const zeroHead = groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0;
+  if (zeroHead && groups[4] === 0 && (groups[5] === 0 || groups[5] === 0xffff)) return quad(groups[6], groups[7]);
+  if (zeroHead && groups[4] === 0xffff && groups[5] === 0) return quad(groups[6], groups[7]);
   return null;
 }
 
@@ -172,11 +173,13 @@ export async function guardedFetch(url, {
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new AppError('url_blocked');
       if (parsed.username || parsed.password) throw new AppError('url_blocked');
 
+      // URL keeps IPv6 literals in brackets, which net.isIP does not recognise.
+      const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
       let addresses;
-      if (net.isIP(parsed.hostname)) addresses = [{ address: parsed.hostname }];
+      if (net.isIP(hostname)) addresses = [{ address: hostname }];
       else {
         try {
-          addresses = await lookup(parsed.hostname, { all: true, order: 'ipv4first' });
+          addresses = await lookup(hostname, { all: true, order: 'ipv4first' });
         } catch (error) {
           // A name that does not resolve is refused like a blocked one, so the client cannot
           // tell the two apart and use that as an SSRF oracle.
@@ -212,7 +215,14 @@ export async function guardedFetch(url, {
       if (!contentType.startsWith('text/html') && !contentType.startsWith('text/plain')) {
         throw new AppError('url_failed', 'Địa chỉ này không phải trang web có chữ.');
       }
-      return { url: current, contentType, body: await readBody(response, maxBytes) };
+      let body;
+      try {
+        body = await readBody(response, maxBytes);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError('url_failed', 'Hết thời gian tải trang.', { detail: error?.message ?? 'body read failed' });
+      }
+      return { url: current, contentType, body };
     }
     throw new AppError('url_failed', 'Trang chuyển hướng quá nhiều lần.');
   } finally {
