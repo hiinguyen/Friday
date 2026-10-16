@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { AppError } from '../errors.js';
-import { NS, parseXml, serializeXml, descendants, attribute, openZip } from '../ingest/xml.js';
+import { NS, parseXml, serializeXml, descendants, attribute, openZip, readZipText } from '../ingest/xml.js';
 
 const BAD_FILE = 'Không đọc được tệp Office này.';
 const PPTX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
@@ -22,7 +22,7 @@ async function readRels(zip, partPath) {
   const relsPath = path.posix.join(dir, '_rels', `${path.posix.basename(partPath)}.rels`);
   const file = zip.file(relsPath);
   if (!file) return [];
-  const doc = parseXml(await file.async('string'));
+  const doc = parseXml(await readZipText(zip, file.name));
   return descendants(doc, NS.rel, 'Relationship').map((rel) => {
     const target = attribute(rel, null, 'Target') ?? '';
     return { id: attribute(rel, null, 'Id'), type: attribute(rel, null, 'Type'), target, part: resolvePart(dir, target) };
@@ -48,7 +48,7 @@ function uniqueMedia(zip, dir, base) {
 async function layoutType(zip, part) {
   const file = zip.file(part);
   if (!file) return null;
-  const doc = parseXml(await file.async('string'));
+  const doc = parseXml(await readZipText(zip, file.name));
   const root = descendants(doc, NS.p, 'sldLayout')[0] ?? doc.documentElement;
   return attribute(root, null, 'type');
 }
@@ -97,10 +97,10 @@ export async function exportPptx(sourceBuffer, placements) {
   const contentTypesFile = zip.file('[Content_Types].xml');
   if (!presFile || !contentTypesFile) throw new AppError('bad_input', BAD_FILE);
 
-  const presDoc = parseXml(await presFile.async('string'));
+  const presDoc = parseXml(await readZipText(zip, presFile.name));
   const relsPath = 'ppt/_rels/presentation.xml.rels';
   const relsFile = zip.file(relsPath);
-  const presRelsDoc = relsFile ? parseXml(await relsFile.async('string')) : parseXml(`<Relationships xmlns="${NS.rel}"/>`);
+  const presRelsDoc = relsFile ? parseXml(await readZipText(zip, relsFile.name)) : parseXml(`<Relationships xmlns="${NS.rel}"/>`);
   const sldIdLst = descendants(presDoc, NS.p, 'sldIdLst')[0];
   if (!sldIdLst) throw new AppError('bad_input', BAD_FILE);
 
@@ -112,7 +112,7 @@ export async function exportPptx(sourceBuffer, placements) {
   const targetOfRel = new Map(relElements.map((rel) => [attribute(rel, null, 'Id'), resolvePart('ppt', attribute(rel, null, 'Target') ?? '')]));
   const usedRelIds = new Set(relElements.map((rel) => attribute(rel, null, 'Id')));
 
-  const contentTypes = parseXml(await contentTypesFile.async('string'));
+  const contentTypes = parseXml(await readZipText(zip, contentTypesFile.name));
   let sldIds = descendants(sldIdLst, NS.p, 'sldId');
   let maxSlide = 0;
   for (const name of Object.keys(zip.files)) {

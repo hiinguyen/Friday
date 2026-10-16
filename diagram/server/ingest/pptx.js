@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { AppError } from '../errors.js';
-import { NS, parseXml, descendants, textOfRuns, attribute, openZip, coreTitle } from './xml.js';
+import { NS, parseXml, descendants, textOfRuns, attribute, openZip, readZipText, coreTitle } from './xml.js';
 
 const BAD_FILE = 'Không đọc được tệp Office này.';
 
@@ -15,8 +15,8 @@ export async function parsePptx(buffer) {
   const presentation = zip.file('ppt/presentation.xml');
   const relsFile = zip.file('ppt/_rels/presentation.xml.rels');
   if (!presentation || !relsFile) throw new AppError('bad_input', BAD_FILE);
-  const presentationDoc = parseXml(await presentation.async('string'));
-  const relsDoc = parseXml(await relsFile.async('string'));
+  const presentationDoc = parseXml(await readZipText(zip, presentation.name));
+  const relsDoc = parseXml(await readZipText(zip, relsFile.name));
   const rels = new Map(descendants(relsDoc, NS.rel, 'Relationship')
     .map((rel) => [attribute(rel, null, 'Id'), attribute(rel, null, 'Target')]));
 
@@ -30,7 +30,7 @@ export async function parsePptx(buffer) {
     const part = resolveTarget(target);
     const file = zip.file(part);
     if (!file) continue;
-    const slide = parseXml(await file.async('string'));
+    const slide = parseXml(await readZipText(zip, file.name));
     const entries = [];
     for (const shape of descendants(slide, NS.p, 'sp')) {
       const placeholder = descendants(shape, NS.p, 'ph')[0];

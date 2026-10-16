@@ -1,3 +1,4 @@
+import zlib from 'node:zlib';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import JSZip from 'jszip';
 import { AppError } from '../errors.js';
@@ -63,12 +64,16 @@ const BAD_OFFICE_FILE = 'Không đọc được tệp Office này.';
 const ZIP_TOO_LARGE = 'Tệp nén quá lớn để xử lý an toàn.';
 
 // JSZip decompresses lazily and has no size limit, so a tiny upload can expand to gigabytes.
-// The central directory already carries every uncompressed size; check it before reading anything.
+// The sizes in the central directory are a cheap first filter, but an attacker writes them,
+// so every read goes through readZipText, which inflates with a hard cap on the real output.
 const ZIP_LIMITS = {
   entries: 2000,
   entryBytes: 25 * 1024 * 1024,
   totalBytes: 100 * 1024 * 1024,
 };
+const METHOD_STORE = 0;
+const METHOD_DEFLATE = 8;
+const budgets = new WeakMap();
 
 function checkZipSize(zip) {
   const entries = Object.values(zip.files);
@@ -96,13 +101,44 @@ export async function openZip(buffer) {
     throw new AppError('bad_input', BAD_OFFICE_FILE, { detail: error.message });
   }
   checkZipSize(zip);
+  budgets.set(zip, { left: ZIP_LIMITS.totalBytes });
   return zip;
 }
 
+function inflateEntry(entry, limit) {
+  const raw = entry._data?.compressedContent;
+  const method = entry._data?.compression?.magic?.charCodeAt(0);
+  if (!(raw instanceof Uint8Array)) throw new AppError('bad_input', BAD_OFFICE_FILE, { detail: `unreadable entry ${entry.name}` });
+  if (method === METHOD_STORE) {
+    if (raw.length > limit) throw new AppError('bad_input', ZIP_TOO_LARGE);
+    return Buffer.from(raw);
+  }
+  if (method !== METHOD_DEFLATE) throw new AppError('bad_input', BAD_OFFICE_FILE, { detail: `unsupported method in ${entry.name}` });
+  try {
+    return zlib.inflateRawSync(raw, { maxOutputLength: limit });
+  } catch (error) {
+    if (error.code === 'ERR_BUFFER_TOO_LARGE') throw new AppError('bad_input', ZIP_TOO_LARGE);
+    throw new AppError('bad_input', BAD_OFFICE_FILE, { detail: error.message });
+  }
+}
+
+// Text of one entry of a zip from openZip, or null when the entry does not exist. A modified
+// entry (written with zip.file(name, text)) is read back through JSZip, since it is ours.
+export async function readZipText(zip, name) {
+  const entry = zip.file(name);
+  if (!entry) return null;
+  const budget = budgets.get(zip);
+  if (!budget) throw new Error('readZipText needs a zip opened with openZip');
+  if (!entry._data?.compressedContent) return entry.async('string');
+  const bytes = inflateEntry(entry, Math.min(ZIP_LIMITS.entryBytes, budget.left));
+  budget.left -= bytes.length;
+  return bytes.toString('utf8');
+}
+
 export async function coreTitle(zip) {
-  const file = zip.file('docProps/core.xml');
-  if (!file) return null;
-  const doc = parseXml(await file.async('string'));
+  const xml = await readZipText(zip, 'docProps/core.xml');
+  if (xml === null) return null;
+  const doc = parseXml(xml);
   const title = descendants(doc, DC, 'title')[0];
   const text = title ? title.textContent.trim() : '';
   return text === '' ? null : text;

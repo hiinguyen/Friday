@@ -1,5 +1,5 @@
 import { AppError } from '../errors.js';
-import { NS, parseXml, descendants, childElements, textOfRuns, attribute, openZip, coreTitle } from './xml.js';
+import { NS, parseXml, descendants, childElements, textOfRuns, attribute, openZip, readZipText, coreTitle } from './xml.js';
 
 const BAD_FILE = 'Không đọc được tệp Office này.';
 
@@ -39,7 +39,7 @@ export async function parseDocx(buffer) {
   const zip = await openZip(buffer);
   const main = zip.file('word/document.xml');
   if (!main) throw new AppError('bad_input', BAD_FILE);
-  const doc = parseXml(await main.async('string'));
+  const doc = parseXml(await readZipText(zip, main.name));
   const body = descendants(doc, NS.w, 'body')[0];
   if (!body) throw new AppError('bad_input', BAD_FILE);
 

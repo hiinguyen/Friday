@@ -1,5 +1,5 @@
 import { AppError } from '../errors.js';
-import { NS, parseXml, serializeXml, childElements, descendants, attribute, openZip } from '../ingest/xml.js';
+import { NS, parseXml, serializeXml, childElements, descendants, attribute, openZip, readZipText } from '../ingest/xml.js';
 
 const BAD_FILE = 'Không đọc được tệp Office này.';
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -69,7 +69,7 @@ export async function exportDocx(sourceBuffer, placements) {
   const contentTypesFile = zip.file('[Content_Types].xml');
   if (!mainFile || !contentTypesFile) throw new AppError('bad_input', BAD_FILE);
 
-  const doc = parseXml(await mainFile.async('string'));
+  const doc = parseXml(await readZipText(zip, mainFile.name));
   const body = descendants(doc, NS.w, 'body')[0];
   if (!body) throw new AppError('bad_input', BAD_FILE);
   const children = childElements(body);
@@ -77,7 +77,7 @@ export async function exportDocx(sourceBuffer, placements) {
   const relsPath = 'word/_rels/document.xml.rels';
   const relsFile = zip.file(relsPath);
   const relsDoc = relsFile
-    ? parseXml(await relsFile.async('string'))
+    ? parseXml(await readZipText(zip, relsFile.name))
     : parseXml(`<Relationships xmlns="${NS.rel}"/>`);
   const relationships = descendants(relsDoc, NS.rel, 'Relationship');
   const usedIds = new Set(relationships.map((rel) => attribute(rel, null, 'Id')));
@@ -109,7 +109,7 @@ export async function exportDocx(sourceBuffer, placements) {
     else body.appendChild(node);
   }
 
-  const contentTypes = parseXml(await contentTypesFile.async('string'));
+  const contentTypes = parseXml(await readZipText(zip, contentTypesFile.name));
   const hasPng = descendants(contentTypes, NS.ct, 'Default').some((el) => attribute(el, null, 'Extension') === 'png');
   if (!hasPng) {
     const definition = contentTypes.createElementNS(NS.ct, 'Default');

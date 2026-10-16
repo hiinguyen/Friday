@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
-import { openZip } from '../server/ingest/xml.js';
+import { openZip, readZipText } from '../server/ingest/xml.js';
+import { parseDocx } from '../server/ingest/docx.js';
 import { makeTestApp, json } from './helpers/app.js';
 
 async function zipBuffer(files) {
@@ -45,4 +46,35 @@ test('a compressed bomb is refused at upload and the server keeps answering', as
   assert.equal(json(res).error.code, 'bad_input');
   assert.equal((await t.app.inject({ url: '/api/health' })).statusCode, 200);
   await t.close();
+});
+
+// Rewrites the uncompressed size in every local and central header, so the archive claims each
+// entry is tiny while it really inflates to megabytes.
+function lieAboutSizes(buffer, declared) {
+  const out = Buffer.from(buffer);
+  for (let i = 0; i + 4 <= out.length; i += 1) {
+    const signature = out.readUInt32LE(i);
+    if (signature === 0x04034b50) out.writeUInt32LE(declared, i + 22);
+    if (signature === 0x02014b50) out.writeUInt32LE(declared, i + 24);
+  }
+  return out;
+}
+
+test('openZip readers enforce the real inflated size, not the declared one', async () => {
+  const xml = `<w:document>${'x'.repeat(30 * 1024 * 1024)}</w:document>`;
+  const buffer = lieAboutSizes(await zipBuffer({ 'word/document.xml': xml }), 1000);
+  const zip = await openZip(buffer);
+  await assert.rejects(readZipText(zip, 'word/document.xml'), { code: 'bad_input' });
+});
+
+test('a docx with lying sizes is refused with bad_input', async () => {
+  const xml = `<w:document>${'x'.repeat(30 * 1024 * 1024)}</w:document>`;
+  const buffer = lieAboutSizes(await zipBuffer({ '[Content_Types].xml': '<Types/>', 'word/document.xml': xml }), 1000);
+  await assert.rejects(parseDocx(buffer), { code: 'bad_input' });
+});
+
+test('readZipText returns the text of a normal entry and null for a missing one', async () => {
+  const zip = await openZip(await zipBuffer({ 'a.xml': '<a>xin chào</a>' }));
+  assert.equal(await readZipText(zip, 'a.xml'), '<a>xin chào</a>');
+  assert.equal(await readZipText(zip, 'missing.xml'), null);
 });
