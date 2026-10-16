@@ -5,12 +5,10 @@ function sourceFor(document, buffer) {
   return null;
 }
 
-export function registerProjectRoutes(app, { config, store, ingest }) {
-  app.get('/api/health', async () => ok({ agent: config.agent, needsToken: config.token !== null }));
+export function registerProjectRoutes(app, { store, ingest }) {
+  app.get('/projects', async () => ok(await store.list()));
 
-  app.get('/api/projects', async () => ok(await store.list()));
-
-  app.post('/api/projects', async (request) => {
+  app.post('/projects', async (request) => {
     if (request.isMultipart()) {
       const part = await request.file();
       if (!part) throw new AppError('bad_input');
@@ -37,14 +35,14 @@ export function registerProjectRoutes(app, { config, store, ingest }) {
     throw new AppError('bad_input');
   });
 
-  app.get('/api/projects/:id', async (request) => ok(await store.get(request.params.id)));
+  app.get('/projects/:id', async (request) => ok(await store.get(request.params.id)));
 
-  app.delete('/api/projects/:id', async (request) => {
+  app.delete('/projects/:id', async (request) => {
     await store.remove(request.params.id);
     return ok({ id: request.params.id });
   });
 
-  app.post('/api/projects/:id/sections', async (request) => {
+  app.post('/projects/:id/sections', async (request) => {
     const project = await store.get(request.params.id);
     const blockIds = request.body?.blockIds;
     if (!Array.isArray(blockIds) || blockIds.length === 0) throw new AppError('bad_input');

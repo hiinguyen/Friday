@@ -39,7 +39,6 @@ function equalToken(provided, expected) {
 
 function authHook(config) {
   return async (request) => {
-    if (!request.url.startsWith('/api/') || request.url.startsWith('/api/health')) return;
     if (config.token === null) return;
     const header = request.headers.authorization ?? '';
     const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -74,7 +73,6 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
     reply.header('referrer-policy', 'no-referrer');
     reply.header('content-security-policy', `default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'${cspHash ? ` '${cspHash}'` : ''}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
   });
-  app.addHook('onRequest', authHook(config));
   app.setErrorHandler(errorHandler);
 
   app.get('/vendor/opentype.mjs', async (request, reply) => {
@@ -86,9 +84,17 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
     return reply.type('text/javascript').send(fs.readFileSync(path.join(dir, 'dist', 'dagre.esm.js')));
   });
 
-  registerProjectRoutes(app, { config, store, ingest });
-  registerAgentRoutes(app, { store, agent, locks });
-  registerExportRoutes(app, { store, fontSet: loadFontSet() });
+  // Health is the one public API route, so it sits outside the authenticated plugin.
+  app.get('/api/health', async () => ok({ agent: config.agent, needsToken: config.token !== null }));
+
+  // Every other API route lives in one encapsulated plugin: the hook runs for whatever
+  // the router matched, so a percent-encoded or differently spelled path cannot skip it.
+  await app.register(async (api) => {
+    api.addHook('onRequest', authHook(config));
+    registerProjectRoutes(api, { config, store, ingest });
+    registerAgentRoutes(api, { store, agent, locks });
+    registerExportRoutes(api, { store, fontSet: loadFontSet() });
+  }, { prefix: '/api' });
 
   await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/' });
   await app.register(fastifyStatic, { root: SHARED_DIR, prefix: '/shared/', decorateReply: false });

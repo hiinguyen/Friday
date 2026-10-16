@@ -9,7 +9,7 @@ function contentDisposition(filename) {
 }
 
 export function registerExportRoutes(app, { store, fontSet }) {
-  app.get('/api/projects/:id/export', async (request, reply) => {
+  app.get('/projects/:id/export', async (request, reply) => {
     const project = await store.get(request.params.id);
     const format = String(request.query.format ?? '');
     const rawSections = request.query.sections;

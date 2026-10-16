@@ -28,7 +28,7 @@ export async function runAgent(locks, agent, project, task, context) {
 }
 
 export function registerAgentRoutes(app, { store, agent, locks }) {
-  app.post('/api/projects/:id/segment', async (request) => {
+  app.post('/projects/:id/segment', async (request) => {
     const project = await store.get(request.params.id);
     project.answers = mergeAnswers(project.answers, request.body?.answers);
     project.pendingQuestions = null;
@@ -46,7 +46,7 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.post('/api/projects/:id/sections/:sid/generate', async (request) => {
+  app.post('/projects/:id/sections/:sid/generate', async (request) => {
     const project = await store.get(request.params.id);
     const section = findSection(project, request.params.sid);
     project.answers = mergeAnswers(project.answers, request.body?.answers);
@@ -60,7 +60,7 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.put('/api/projects/:id/sections/:sid/diagram', async (request) => {
+  app.put('/projects/:id/sections/:sid/diagram', async (request) => {
     const project = await store.get(request.params.id);
     const section = findSection(project, request.params.sid);
     const spec = request.body?.spec;
@@ -70,7 +70,7 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.post('/api/projects/:id/sections/:sid/refine', async (request) => {
+  app.post('/projects/:id/sections/:sid/refine', async (request) => {
     const project = await store.get(request.params.id);
     const section = findSection(project, request.params.sid);
     const spec = request.body?.spec;
@@ -82,5 +82,5 @@ export function registerAgentRoutes(app, { store, agent, locks }) {
     return ok(await store.save(project));
   });
 
-  app.post('/api/projects/:id/cancel', async (request) => ok({ cancelled: locks.cancel(request.params.id) }));
+  app.post('/projects/:id/cancel', async (request) => ok({ cancelled: locks.cancel(request.params.id) }));
 }
