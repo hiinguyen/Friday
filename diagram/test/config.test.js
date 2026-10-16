@@ -36,6 +36,15 @@ test('hermes settings fall back to the FRIDAY_AGENT_* variables', () => {
   assert.deepEqual(own.hermes, { url: 'http://127.0.0.1:8642', key: 'x', model: 'm' });
 });
 
+test('refuses a plain http Hermes URL with a key on a non-loopback host', () => {
+  assert.throws(() => loadConfig({ DIAGRAM_HERMES_URL: 'http://hermes.example.com', DIAGRAM_HERMES_KEY: 'k' }), /DIAGRAM_HERMES_URL/);
+  assert.equal(loadConfig({ DIAGRAM_HERMES_URL: 'http://127.0.0.1:8642', DIAGRAM_HERMES_KEY: 'k' }).hermes.url, 'http://127.0.0.1:8642');
+  assert.equal(loadConfig({ DIAGRAM_HERMES_URL: 'http://[::1]:8642', DIAGRAM_HERMES_KEY: 'k' }).hermes.url, 'http://[::1]:8642');
+  assert.equal(loadConfig({ DIAGRAM_HERMES_URL: 'http://localhost:8642', DIAGRAM_HERMES_KEY: 'k' }).hermes.url, 'http://localhost:8642');
+  assert.equal(loadConfig({ DIAGRAM_HERMES_URL: 'https://hermes.example.com', DIAGRAM_HERMES_KEY: 'k' }).hermes.url, 'https://hermes.example.com');
+  assert.equal(loadConfig({ DIAGRAM_HERMES_URL: 'http://hermes.example.com' }).hermes.url, 'http://hermes.example.com');
+});
+
 test('timeout and model are read from the environment', () => {
   const config = loadConfig({ DIAGRAM_AGENT_TIMEOUT_S: '30', DIAGRAM_CLAUDE_MODEL: 'sonnet' });
   assert.equal(config.agentTimeoutMs, 30000);

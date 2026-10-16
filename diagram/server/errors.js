@@ -1,9 +1,8 @@
 export const STATUS = {
   bad_input: 400, url_blocked: 400, unauthorized: 401, forbidden: 403, not_found: 404, busy: 409, cancelled: 409, too_many: 429,
-  internal: 500, export_failed: 500, url_failed: 502, agent_bad_output: 502, agent_error: 502,
+  internal: 500, export_failed: 500, url_failed: 502, agent_bad_output: 502, agent_error: 502, agent_failed: 502,
   agent_unavailable: 503, agent_timeout: 504,
 };
-
 export const DEFAULT_MESSAGES = {
   bad_input: 'Tệp hoặc nội dung không hợp lệ.',
   url_blocked: 'Không được phép tải địa chỉ này.',
@@ -18,6 +17,7 @@ export const DEFAULT_MESSAGES = {
   export_failed: 'Xuất tệp thất bại.',
   agent_bad_output: 'AI trả về dữ liệu không hợp lệ. Hãy thử lại.',
   agent_error: 'AI báo lỗi.',
+  agent_failed: 'AI trả về phản hồi quá lớn.',
   agent_unavailable: 'Chưa cấu hình AI.',
   agent_timeout: 'AI trả lời quá lâu nên đã bị dừng. Hãy thử lại.',
 };

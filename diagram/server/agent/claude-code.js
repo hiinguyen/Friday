@@ -5,6 +5,18 @@ import path from 'node:path';
 import { AppError } from '../errors.js';
 import { extractJson } from './json-extract.js';
 
+const MAX_STREAM_BYTES = 5 * 1024 * 1024;
+const ENV_KEYS = ['PATH', 'HOME', 'LANG'];
+
+// The child only needs the environment Claude Code itself reads; never the app's own secrets.
+function childEnv(source) {
+  const env = {};
+  for (const name of Object.keys(source)) {
+    if (ENV_KEYS.includes(name) || /^(ANTHROPIC_|CLAUDE_)/.test(name)) env[name] = source[name];
+  }
+  return env;
+}
+
 export function createClaudeCodeAdapter({ model = null, spawnImpl = spawn, tmpRoot = os.tmpdir() } = {}) {
   return {
     name: 'claude-code',
@@ -46,16 +58,40 @@ export function createClaudeCodeAdapter({ model = null, spawnImpl = spawn, tmpRo
 
         let child;
         try {
-          child = spawnImpl('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+          child = spawnImpl('claude', args, { cwd, env: childEnv(process.env), stdio: ['pipe', 'pipe', 'pipe'] });
         } catch (error) {
           fail(new AppError('agent_error', error?.message ?? 'could not spawn claude'));
           return;
         }
 
         let stdout = '';
+        let stdoutBytes = 0;
         let stderr = '';
-        child.stdout.on('data', (chunk) => { stdout += chunk; });
-        child.stderr.on('data', (chunk) => { stderr += chunk; });
+        let stderrBytes = 0;
+        const tooLarge = () => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* already gone */
+          }
+          fail(new AppError('agent_failed'));
+        };
+        child.stdout.on('data', (chunk) => {
+          stdoutBytes += chunk.length;
+          if (stdoutBytes > MAX_STREAM_BYTES) {
+            tooLarge();
+            return;
+          }
+          stdout += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          stderrBytes += chunk.length;
+          if (stderrBytes > MAX_STREAM_BYTES) {
+            tooLarge();
+            return;
+          }
+          stderr += chunk;
+        });
         child.on('error', (error) => {
           if (error?.code === 'ENOENT') {
             fail(new AppError('agent_unavailable', 'Không tìm thấy lệnh claude. Cài Claude Code hoặc đặt DIAGRAM_AGENT=hermes.'));
@@ -81,7 +117,7 @@ export function createClaudeCodeAdapter({ model = null, spawnImpl = spawn, tmpRo
             return;
           }
           if (parsed.is_error === true) {
-            fail(new AppError('agent_error', parsed.result || 'Claude Code báo lỗi.'));
+            fail(new AppError('agent_error', undefined, { detail: String(parsed.result ?? '').slice(0, 2000) }));
             return;
           }
           if (parsed.structured_output && typeof parsed.structured_output === 'object') {

@@ -32,6 +32,21 @@ export function loadConfig(env) {
   }
   const dataDir = path.resolve(DIAGRAM_ROOT, '..', nonEmpty(env.DIAGRAM_DATA_DIR) ?? path.join('diagram', 'data'));
   const url = nonEmpty(env.DIAGRAM_HERMES_URL) ?? nonEmpty(env.FRIDAY_AGENT_URL);
+  const key = nonEmpty(env.DIAGRAM_HERMES_KEY) ?? nonEmpty(env.FRIDAY_AGENT_KEY);
+  const hermesUrl = url === null ? null : url.replace(/\/+$/, '');
+  // A bearer key over plain http leaves the network: only loopback may be unencrypted.
+  if (hermesUrl !== null && key !== null) {
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(hermesUrl);
+    } catch {
+      parsedUrl = null;
+    }
+    const hostname = parsedUrl ? parsedUrl.hostname.replace(/^\[|\]$/g, '') : null;
+    if (parsedUrl && parsedUrl.protocol === 'http:' && hostname !== null && !LOOPBACK.has(hostname)) {
+      throw new Error(`DIAGRAM_HERMES_URL (${hermesUrl}) must use https or a loopback host when DIAGRAM_HERMES_KEY is set`);
+    }
+  }
   const publicOrigin = nonEmpty(env.DIAGRAM_PUBLIC_ORIGIN);
   return {
     agent,
@@ -46,8 +61,8 @@ export function loadConfig(env) {
     agentTimeoutMs: parsePositive(env.DIAGRAM_AGENT_TIMEOUT_S, DEFAULT_TIMEOUT_S, 'DIAGRAM_AGENT_TIMEOUT_S') * 1000,
     claudeModel: nonEmpty(env.DIAGRAM_CLAUDE_MODEL),
     hermes: {
-      url: url === null ? null : url.replace(/\/+$/, ''),
-      key: nonEmpty(env.DIAGRAM_HERMES_KEY) ?? nonEmpty(env.FRIDAY_AGENT_KEY),
+      url: hermesUrl,
+      key,
       model: nonEmpty(env.DIAGRAM_HERMES_MODEL) ?? nonEmpty(env.FRIDAY_AGENT_MODEL) ?? DEFAULT_HERMES_MODEL,
     },
   };

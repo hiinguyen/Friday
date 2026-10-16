@@ -51,12 +51,66 @@ test('claude-code falls back to the result text and maps errors', async () => {
   const text = fakeSpawn({ stdout: JSON.stringify({ type: 'result', is_error: false, result: 'Đây {"a":2}' }) });
   assert.deepEqual(await createClaudeCodeAdapter({ spawnImpl: text.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }), { a: 2 });
   const failed = fakeSpawn({ stdout: JSON.stringify({ type: 'result', is_error: true, result: 'Usage limit reached' }) });
-  await assert.rejects(createClaudeCodeAdapter({ spawnImpl: failed.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }), { code: 'agent_error', message: 'Usage limit reached' });
+  await assert.rejects(
+    createClaudeCodeAdapter({ spawnImpl: failed.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }),
+    { code: 'agent_error', message: 'AI báo lỗi.', detail: 'Usage limit reached' },
+  );
   const missing = fakeSpawn({ error: Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }) });
   await assert.rejects(createClaudeCodeAdapter({ spawnImpl: missing.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }), { code: 'agent_unavailable' });
   const crashed = fakeSpawn({ code: 2, stderr: 'boom' });
   await assert.rejects(createClaudeCodeAdapter({ spawnImpl: crashed.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }), { code: 'agent_error' });
 });
+
+test('claude-code never puts model output in the client message', async () => {
+  const failed = fakeSpawn({ stdout: JSON.stringify({ type: 'result', is_error: true, result: 'SECRET-LIMIT-TEXT' }) });
+  const error = await createClaudeCodeAdapter({ spawnImpl: failed.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }).then(() => null, (e) => e);
+  assert.equal(error.message, 'AI báo lỗi.');
+  assert.ok(!error.message.includes('SECRET-LIMIT-TEXT'));
+  assert.equal(error.detail, 'SECRET-LIMIT-TEXT');
+});
+
+test('claude-code caps the collected output at 5 MB per stream', async () => {
+  const big = fakeSpawn({ stdout: 'x'.repeat(6 * 1024 * 1024) });
+  await assert.rejects(
+    createClaudeCodeAdapter({ spawnImpl: big.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }),
+    { code: 'agent_failed' },
+  );
+  const noisy = fakeSpawn({ code: 2, stderr: 'y'.repeat(6 * 1024 * 1024) });
+  await assert.rejects(
+    createClaudeCodeAdapter({ spawnImpl: noisy.spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal }),
+    { code: 'agent_failed' },
+  );
+});
+
+test('claude-code spawns with a minimal environment', async () => {
+  const saved = new Map();
+  const set = (name, value) => { saved.set(name, process.env[name]); process.env[name] = value; };
+  set('DIAGRAM_TOKEN', 'token-secret');
+  set('DIAGRAM_HERMES_KEY', 'hermes-secret');
+  set('ANTHROPIC_API_KEY', 'anthropic-key');
+  set('CLAUDE_CONFIG_DIR', '/tmp/claude-config');
+  try {
+    const { spawnImpl, calls } = fakeSpawn({ stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: { ok: 1 } }) });
+    await createClaudeCodeAdapter({ spawnImpl }).run({ system: '', user: '', schema: SCHEMA, signal: new AbortController().signal });
+    const env = calls[0].options.env;
+    assert.ok(env && typeof env === 'object');
+    assert.equal(env.ANTHROPIC_API_KEY, 'anthropic-key');
+    assert.equal(env.CLAUDE_CONFIG_DIR, '/tmp/claude-config');
+    if (process.env.PATH) assert.equal(env.PATH, process.env.PATH);
+    if (process.env.HOME) assert.equal(env.HOME, process.env.HOME);
+    assert.equal(env.DIAGRAM_TOKEN, undefined);
+    assert.equal(env.DIAGRAM_HERMES_KEY, undefined);
+    for (const name of Object.keys(env)) {
+      assert.ok(['PATH', 'HOME', 'LANG'].includes(name) || /^(ANTHROPIC_|CLAUDE_)/.test(name), `unexpected env ${name}`);
+    }
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 
 test('claude-code kills the process when aborted', async () => {
   const { spawnImpl } = fakeSpawn({ hang: true });
