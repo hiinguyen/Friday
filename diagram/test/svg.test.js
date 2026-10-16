@@ -4,7 +4,9 @@ import { loadFontSet } from '../server/render/fonts-node.js';
 import { renderSpec } from '../shared/render/render.js';
 import { sceneToSvg } from '../shared/render/svg.js';
 import { getTheme } from '../shared/render/themes.js';
+import { TEMPLATES } from '../shared/render/registry.js';
 import { makeSpec } from './helpers/specs.js';
+import { sampleSpec } from './helpers/samples.js';
 
 const fonts = loadFontSet();
 
@@ -39,3 +41,15 @@ test('background can be left out for transparent exports', () => {
   assert.ok(sceneToSvg(scene, getTheme('classic'), { fontSet: fonts }).includes('data-role="background"'));
   assert.ok(!sceneToSvg(scene, getTheme('classic'), { fontSet: fonts, background: false }).includes('data-role="background"'));
 });
+
+for (const template of TEMPLATES) {
+  for (const count of [template.minNodes, template.maxNodes]) {
+    for (const long of [false, true]) {
+      test(`text as paths has no NaN: ${template.id}, ${count} nodes, long=${long}`, () => {
+        const spec = sampleSpec(template, count, { long });
+        const { svg } = renderSpec(spec, { fontSet: fonts, textAsPaths: true });
+        assert.ok(!svg.includes('NaN'), `${template.id} ${count} long=${long}`);
+      });
+    }
+  }
+}
