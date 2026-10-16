@@ -1,10 +1,29 @@
 import { AppError } from '../errors.js';
+import { layoutSpec } from '../../shared/render/render.js';
 import { exportSvg } from './svg.js';
 import { exportPng } from './png.js';
 import { exportPdf } from './pdf.js';
 import { exportMarkdownZip } from './markdown-zip.js';
 
 export { exportSvg, exportPng, exportPdf, exportMarkdownZip };
+
+export function placementsFor(project, diagrams, fontSet) {
+  const isDocx = project.document.format === 'docx';
+  return diagrams.map(({ section, spec }) => {
+    const scene = layoutSpec(spec, fontSet);
+    const lastId = section.blockIds[section.blockIds.length - 1];
+    const block = project.document.blocks.find((entry) => entry.id === lastId);
+    return {
+      sectionId: section.id,
+      title: spec.title,
+      png: exportPng(spec, fontSet),
+      width: scene.width,
+      height: scene.height,
+      ...(isDocx ? { bodyIndex: block?.source?.bodyIndex ?? 0 } : {}),
+      ...(isDocx ? {} : { slidePart: block?.source?.slidePart }),
+    };
+  });
+}
 
 export function chosenDiagrams(project, sectionIds = null) {
   const filter = sectionIds ? new Set(sectionIds) : null;

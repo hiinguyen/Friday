@@ -1,5 +1,7 @@
 import { AppError } from '../errors.js';
-import { chosenDiagrams, exportFileName, renderExport } from '../export/index.js';
+import { chosenDiagrams, exportFileName, renderExport, placementsFor } from '../export/index.js';
+import { exportDocx, DOCX_CONTENT_TYPE } from '../export/docx.js';
+import { exportPptx, PPTX_CONTENT_TYPE } from '../export/pptx.js';
 
 function contentDisposition(filename) {
   const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
@@ -22,7 +24,16 @@ export function registerExportRoutes(app, { store, fontSet }) {
     }
     if (format === 'docx' || format === 'pptx') {
       if (project.document.format !== format) throw new AppError('bad_input', 'Chỉ xuất được về đúng định dạng tệp gốc.');
-      throw new AppError('bad_input');
+      try {
+        const source = await store.readSource(project);
+        const placements = placementsFor(project, diagrams, fontSet);
+        const buffer = format === 'docx' ? await exportDocx(source, placements) : await exportPptx(source, placements);
+        reply.header('content-disposition', contentDisposition(exportFileName(project, `.${format}`)));
+        return reply.type(format === 'docx' ? DOCX_CONTENT_TYPE : PPTX_CONTENT_TYPE).send(buffer);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError('export_failed', undefined, { detail: error.message });
+      }
     }
 
     let result;
