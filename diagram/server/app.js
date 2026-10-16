@@ -33,10 +33,10 @@ function importMapHash() {
 }
 
 function equalToken(provided, expected) {
-  const a = Buffer.from(String(provided ?? ''));
-  const b = Buffer.from(String(expected ?? ''));
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  // Hash both sides first: SHA-256 digests are always the same length, so the comparison
+  // never branches on the input length and timingSafeEqual always sees equal lengths.
+  const digest = (value) => crypto.createHash('sha256').update(String(value ?? '')).digest();
+  return crypto.timingSafeEqual(digest(provided), digest(expected));
 }
 
 function authHook(config, attempts) {

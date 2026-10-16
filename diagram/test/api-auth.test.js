@@ -45,6 +45,16 @@ test('write and export routes are covered through an encoded path', async () => 
   await t.close();
 });
 
+test('a wrong token of any length is refused, the right one is accepted', async () => {
+  const t = await makeTestApp({ env: { DIAGRAM_TOKEN: TOKEN } });
+  for (const provided of ['', 'x', 'secret-124', 'secret-123-extra', 'A'.repeat(200)]) {
+    const denied = await t.app.inject({ url: '/api/projects', headers: { authorization: `Bearer ${provided}` } });
+    assert.equal(denied.statusCode, 401, provided);
+  }
+  assert.equal((await t.app.inject({ url: '/api/projects', headers: AUTH })).statusCode, 200);
+  await t.close();
+});
+
 test('health stays open with a token configured', async () => {
   const t = await makeTestApp({ env: { DIAGRAM_TOKEN: TOKEN } });
   for (const url of ['/api/health', '/%61pi/health']) {
