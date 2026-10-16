@@ -32,10 +32,19 @@ test('a pptx deck becomes one section per slide', async () => {
   assert.deepEqual(out.sections.map((section) => section.title), ['Tổng quan', 'Kế hoạch', 'Ngân sách']);
 });
 
-test('fake generate returns three valid candidates', async () => {  const document = ingestText('Nghiên cứu khách hàng.\nThiết kế giải pháp.\nPhát triển sản phẩm.\nRa mắt.');
+test('fake generate returns three valid candidates', async () => {
+  const document = ingestText('Nghiên cứu khách hàng.\nThiết kế giải pháp.\nPhát triển sản phẩm.\nRa mắt.');
   const section = { id: 's1', blockIds: ['b0'], title: 'Quy trình', summary: '', suggestedKinds: [] };
   const out = await createAgent(config).run('generate', { document, section, answers: [] }, { signal: signal() });
   assert.deepEqual(out.candidates.map((c) => c.template), ['steps', 'cards', 'timeline']);
+});
+
+test('fake generate follows an "independent ideas" answer', async () => {
+  const document = ingestText('Nghiên cứu khách hàng.\nThiết kế giải pháp.\nPhát triển sản phẩm.');
+  const section = { id: 's1', blockIds: ['b0'], title: 'Ý chính', summary: '', suggestedKinds: [] };
+  const answers = [{ questionId: 'q1', question: 'Thứ tự?', optionIds: ['b'], optionLabels: ['Các ý độc lập'], free: '' }];
+  const out = await createAgent(config).run('generate', { document, section, answers }, { signal: signal() });
+  assert.deepEqual(out.candidates.map((c) => c.template), ['cards', 'icon-row', 'steps']);
 });
 
 test('a bad answer is retried once, then reported as agent_bad_output', async () => {
