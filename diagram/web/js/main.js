@@ -1,10 +1,12 @@
 import { createStore } from './state.js';
 import { createApi } from './api.js';
-import { onRoute, go } from './router.js';
-import { h, clear } from './ui/dom.js';
+import { onRoute, go, parseRoute } from './router.js';
+import { clear } from './ui/dom.js';
 import { toast } from './ui/toast.js';
 import { showBusy, hideBusy } from './ui/progress.js';
+import { loadBrowserFontSet } from './fonts.js';
 import { mountHome } from './views/home.js';
+import { mountProject } from './views/project.js';
 import { getToken, clearToken, openTokenDialog } from './dialogs/token.js';
 
 const store = createStore({
@@ -12,87 +14,86 @@ const store = createStore({
   project: null,
   sectionId: null,
   histories: {},
+  picked: {},
   selectedNodeId: null,
   busy: null,
   pendingSave: false,
 });
 
+const app = document.getElementById('app');
+const topbarSlot = document.getElementById('topbar-slot');
+let view = null;
+let renderToken = 0;
+
+// After a 401 the stored token is dropped and the dialog asks again; once a token is entered
+// the current screen is rendered again from scratch.
+function askToken(error = null) {
+  openTokenDialog({ error, onSubmit: () => render(parseRoute(window.location.hash), { force: true }) });
+}
+
 const api = createApi({
   getToken,
   onUnauthorized: () => {
+    const hadToken = Boolean(getToken());
     clearToken();
-    openTokenDialog({ onSubmit: () => start() });
+    askToken(hadToken ? 'Mã truy cập không đúng.' : null);
   },
 });
 
-const app = document.getElementById('app');
-const topbarSlot = document.getElementById('topbar-slot');
-let renderToken = 0;
-
-function mountProjectPlaceholder(el, ctx, project) {
-  const { api, store } = ctx;
-  clear(el);
-  el.appendChild(h('div', { class: 'home' },
-    h('h1', { text: project.document.title || 'Dự án' }),
-    h('p', { class: 'lead', text: project.pendingQuestions ? 'AI đang chờ bạn trả lời.' : 'Chọn một phần để vẽ sơ đồ.' })));
-  const sections = project.sections ?? [];
-  if (sections.length === 0) {
-    el.appendChild(h('div', { class: 'home' }, h('p', { class: 'empty', text: 'AI chưa chia phần.' })));
-    return;
-  }
-  const list = h('ul', { class: 'recent' });
-  for (const section of sections) {
-    list.appendChild(h('li', null, h('span', { text: section.title }), h('span', { class: 'meta', text: `${section.blockIds.length} đoạn` })));
-  }
-  el.appendChild(h('div', { class: 'home' }, list));
-  store.set({ sectionId: sections[0].id });
-}
-
-async function renderProject(route) {
-  const token = ++renderToken;
-  const known = store.get().project;
-  if (!known || known.id !== route.projectId) {
-    clear(app);
-    showBusy({ label: 'Đang tải dự án...' });
-    let project;
-    try {
-      project = await api.getProject(route.projectId);
-    } catch (error) {
-      hideBusy();
-      if (token === renderToken) {
-        toast(error.message, { kind: 'error' });
-        go('#/');
-      }
-      return;
-    }
-    if (token !== renderToken) return;
-    hideBusy();
-    store.set({ project });
-  }
-  if (token !== renderToken) return;
-  mountProjectPlaceholder(app, { api, store, go }, store.get().project);
-}
-
-function render(route) {
-  renderToken += 1;
+function teardown() {
+  view?.instance?.destroy?.();
+  view = null;
   clear(topbarSlot);
   clear(app);
-  if (route.name === 'project') renderProject(route);
-  else mountHome(app, { api, store, go });
+}
+
+async function renderProject(route, force) {
+  if (!force && view?.kind === 'project' && view.projectId === route.projectId && view.instance) {
+    view.instance.setRoute(route);
+    return;
+  }
+  teardown();
+  const token = ++renderToken;
+  view = { kind: 'project', projectId: route.projectId, instance: null };
+  const known = store.get().project;
+  showBusy({ label: 'Đang tải dự án...' });
+  try {
+    const [project, fontSet] = await Promise.all([
+      !force && known?.id === route.projectId ? known : api.getProject(route.projectId),
+      loadBrowserFontSet(),
+    ]);
+    if (token !== renderToken) return;
+    store.set({ project, sectionId: null, histories: {}, picked: {}, selectedNodeId: null, busy: null });
+    view.instance = mountProject(app, { store, api, fontSet, go, topbarSlot });
+    view.instance.setRoute(route);
+  } catch (error) {
+    if (token !== renderToken || error.status === 401) return;
+    toast(error.message, { kind: 'error' });
+    go('#/');
+  } finally {
+    if (token === renderToken) hideBusy();
+  }
+}
+
+function render(route, { force = false } = {}) {
+  if (route.name === 'project') {
+    renderProject(route, force);
+    return;
+  }
+  teardown();
+  renderToken += 1;
+  view = { kind: 'home', instance: mountHome(app, { api, store, go }) };
 }
 
 async function start() {
   try {
     const health = await api.health();
     store.set({ health });
-    if (health.needsToken && !getToken()) {
-      openTokenDialog({ onSubmit: () => start() });
-      return;
-    }
+    if (health.needsToken && !getToken()) askToken();
   } catch (error) {
     toast(error.message, { kind: 'error' });
   }
+  onRoute((route) => render(route));
 }
 
 start();
-onRoute(render);

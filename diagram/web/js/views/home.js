@@ -4,6 +4,7 @@ import { showBusy, hideBusy } from '../ui/progress.js';
 
 const relative = new Intl.RelativeTimeFormat('vi', { numeric: 'auto' });
 const FILE_ACCEPT = '.txt,.md,.docx,.pptx';
+const FORMAT_LABELS = { text: 'Văn bản', txt: 'TXT', md: 'Markdown', docx: 'Word', pptx: 'PowerPoint', url: 'Web' };
 
 function relativeTime(iso) {
   const seconds = (new Date(iso).getTime() - Date.now()) / 1000;
@@ -131,7 +132,7 @@ export function mountHome(el, ctx) {
       }, 'Xoá');
       recentList.appendChild(h('li', null,
         h('a', { href: `#/p/${project.id}` }, project.title || 'Không có tiêu đề'),
-        h('span', { class: 'badge', text: project.format }),
+        h('span', { class: 'badge', text: FORMAT_LABELS[project.format] ?? project.format }),
         h('span', { class: 'meta', text: `${project.diagramCount} sơ đồ` }),
         h('span', { class: 'meta', text: relativeTime(project.updatedAt) }),
         remove));

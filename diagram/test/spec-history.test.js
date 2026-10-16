@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHistory, pushHistory, undo, redo, canUndo, canRedo } from '../shared/spec/history.js';
+import { createHistory, pushHistory, undo, redo, canUndo, canRedo, replaceHistory } from '../shared/spec/history.js';
 import { makeSpec } from './helpers/specs.js';
 
 test('undo and redo walk the history', () => {
@@ -28,4 +28,12 @@ test('history is capped at 100 steps and ignores identical pushes', () => {
   assert.equal(h.past.length, 100);
   assert.equal(pushHistory(h, makeSpec({ title: '150' })), h);
   assert.ok(canUndo(h));
+});
+
+test('replaceHistory swaps the present without adding a step', () => {
+  let h = pushHistory(createHistory(makeSpec({ title: 'a' })), makeSpec({ title: 'b' }));
+  h = replaceHistory(h, makeSpec({ title: 'bc' }));
+  assert.equal(h.present.title, 'bc');
+  assert.equal(h.past.length, 1);
+  assert.equal(undo(h).present.title, 'a');
 });

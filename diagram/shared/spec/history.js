@@ -20,6 +20,10 @@ export function canRedo(history) {
   return history.future.length > 0;
 }
 
+export function replaceHistory(history, spec) {
+  return { past: history.past, present: spec, future: history.future };
+}
+
 export function undo(history) {
   if (!canUndo(history)) return history;
   const present = history.past[history.past.length - 1];

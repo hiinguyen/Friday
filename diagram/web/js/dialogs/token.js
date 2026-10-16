@@ -1,4 +1,4 @@
-import { h, clear } from '../ui/dom.js';
+import { h } from '../ui/dom.js';
 
 const TOKEN_KEY = 'diagram.token';
 let memoryToken = null;
@@ -29,20 +29,28 @@ export function clearToken() {
 let dialog = null;
 let handler = null;
 
+// The dialog cannot be dismissed: without a token every API call fails, so Escape is ignored
+// and only a non-empty token closes it.
 function ensureDialog() {
   if (dialog) return dialog;
-  const input = h('input', { type: 'password', id: 'token-input', autocomplete: 'current-password', 'aria-label': 'Mã truy cập' });
+  const input = h('input', { type: 'password', id: 'token-input', autocomplete: 'current-password', required: true });
+  const error = h('p', { class: 'field-error', id: 'token-error', role: 'alert', hidden: true });
   const form = h('form', { method: 'dialog' },
     h('h2', { text: 'Nhập mã truy cập' }),
     h('p', { class: 'lead', text: 'Máy chủ này yêu cầu mã truy cập.' }),
-    h('div', { class: 'field' }, h('label', { for: 'token-input', text: 'Mã truy cập' }), input),
+    h('div', { class: 'field' }, h('label', { for: 'token-input', text: 'Mã truy cập' }), input, error),
     h('div', { class: 'dialog-actions' },
       h('button', { class: 'button primary', type: 'submit' }, 'Tiếp tục')));
   dialog = h('dialog', { class: 'token-dialog', 'aria-label': 'Mã truy cập' }, form);
   document.body.appendChild(dialog);
-  form.addEventListener('submit', () => {
+  dialog.addEventListener('cancel', (event) => event.preventDefault());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
     const value = input.value.trim();
-    if (value === '') return;
+    if (value === '') {
+      input.focus();
+      return;
+    }
     setToken(value);
     dialog.close();
     const run = handler;
@@ -52,17 +60,15 @@ function ensureDialog() {
   return dialog;
 }
 
-export function openTokenDialog({ onSubmit } = {}) {
+export function openTokenDialog({ onSubmit, error = null } = {}) {
   handler = onSubmit ?? null;
   const el = ensureDialog();
   const input = el.querySelector('#token-input');
-  input.value = getToken() ?? '';
+  const message = el.querySelector('#token-error');
+  message.textContent = error ?? '';
+  message.hidden = !error;
+  input.setAttribute('aria-invalid', String(Boolean(error)));
+  input.value = '';
   if (!el.open) el.showModal();
   input.focus();
-  input.select();
-}
-
-export function closeTokenDialog() {
-  if (dialog && dialog.open) dialog.close();
-  clear(dialog?.querySelector('#token-input'));
 }
