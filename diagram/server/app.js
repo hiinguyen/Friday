@@ -10,6 +10,8 @@ import { AppError, toEnvelope, ok } from './errors.js';
 import { createLocks } from './locks.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerAgentRoutes } from './routes/agent.js';
+import { registerExportRoutes } from './routes/export.js';
+import { loadFontSet } from './render/fonts-node.js';
 import { ingestText, ingestFile, ingestUrl } from './ingest/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -86,6 +88,7 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
 
   registerProjectRoutes(app, { config, store, ingest });
   registerAgentRoutes(app, { store, agent, locks });
+  registerExportRoutes(app, { store, fontSet: loadFontSet() });
 
   await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/' });
   await app.register(fastifyStatic, { root: SHARED_DIR, prefix: '/shared/', decorateReply: false });
