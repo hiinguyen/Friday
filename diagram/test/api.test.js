@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { makeTestApp, json } from './helpers/app.js';
 import { buildDocx } from './helpers/office.js';
 import { AppError } from '../server/errors.js';
+import { createAgent } from '../server/agent/index.js';
+import { loadConfig } from '../server/config.js';
 
 const LONG = '# Quy trình\n\nNghiên cứu khách hàng.\n\nThiết kế giải pháp.\n\nPhát triển sản phẩm.\n\n# Đo lường\n\nTheo dõi số liệu sau khi ra mắt.';
 
@@ -124,5 +126,32 @@ test('static files and vendor modules are served', async () => {
   assert.equal((await t.app.inject({ url: '/vendor/opentype.mjs' })).statusCode, 200);
   assert.equal((await t.app.inject({ url: '/vendor/dagre.esm.js' })).statusCode, 200);
   assert.equal((await t.app.inject({ url: '/shared/render/render.js' })).statusCode, 200);
+  await t.close();
+});
+
+test('a diagram saved while an agent call runs survives that call', async () => {
+  const fake = createAgent(loadConfig({ DIAGRAM_AGENT: 'fake' }));
+  let release = null;
+  const agent = {
+    name: 'gated',
+    async run(task, context, options) {
+      if (task === 'generate' && context.section.id === 's2') await new Promise((resolve) => { release = resolve; });
+      return fake.run(task, context, options);
+    },
+  };
+  const t = await makeTestApp({ agent });
+  const project = await createText(t.app, LONG);
+  const base = `/api/projects/${project.id}`;
+  await t.app.inject({ method: 'POST', url: `${base}/segment`, payload: {} });
+  const s1 = json(await t.app.inject({ method: 'POST', url: `${base}/sections/s1/generate`, payload: {} })).data.diagrams.s1;
+  const slow = t.app.inject({ method: 'POST', url: `${base}/sections/s2/generate`, payload: {} });
+  while (!release) await new Promise((r) => setTimeout(r, 5));
+  const edited = { ...s1.candidates[0], title: 'Tiêu đề tự sửa' };
+  assert.equal((await t.app.inject({ method: 'PUT', url: `${base}/sections/s1/diagram`, payload: { spec: edited } })).statusCode, 200);
+  release();
+  assert.equal((await slow).statusCode, 200);
+  const after = json(await t.app.inject({ url: base })).data;
+  assert.equal(after.diagrams.s1.chosen.title, 'Tiêu đề tự sửa');
+  assert.equal(after.diagrams.s2.candidates.length, 3);
   await t.close();
 });

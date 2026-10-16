@@ -18,6 +18,12 @@ export function findSection(project, sectionId) {
   return section;
 }
 
+// An agent call takes seconds, and the editor keeps saving diagrams meanwhile. Apply each
+// result to a fresh read of the project, never to the copy read before the call.
+async function latest(store, project) {
+  return store.get(project.id);
+}
+
 export async function runAgent(locks, agent, project, task, context) {
   const controller = locks.acquire(project.id);
   try {
@@ -39,13 +45,15 @@ export function registerAgentRoutes(app, { store, agent, locks, maxCallsPerMinut
       return ok(await store.save(project));
     }
     const result = await runAgent(locks, agent, project, 'segment', { document: project.document, answers: project.answers });
+    const fresh = await latest(store, project);
+    fresh.answers = project.answers;
     if (result.questions.length > 0) {
-      project.pendingQuestions = { task: 'segment', sectionId: null, questions: result.questions };
+      fresh.pendingQuestions = { task: 'segment', sectionId: null, questions: result.questions };
     } else {
-      project.sections = result.sections;
-      project.pendingQuestions = null;
+      fresh.sections = result.sections;
+      fresh.pendingQuestions = null;
     }
-    return ok(await store.save(project));
+    return ok(await store.save(fresh));
   });
 
   app.post('/projects/:id/sections/:sid/generate', limit, async (request) => {
@@ -54,12 +62,15 @@ export function registerAgentRoutes(app, { store, agent, locks, maxCallsPerMinut
     project.answers = mergeAnswers(project.answers, request.body?.answers);
     project.pendingQuestions = null;
     const result = await runAgent(locks, agent, project, 'generate', { document: project.document, section, answers: project.answers });
+    const fresh = await latest(store, project);
+    fresh.answers = project.answers;
     if (result.questions.length > 0) {
-      project.pendingQuestions = { task: 'generate', sectionId: section.id, questions: result.questions };
+      fresh.pendingQuestions = { task: 'generate', sectionId: section.id, questions: result.questions };
     } else {
-      project.diagrams[section.id] = { candidates: result.candidates, chosen: null };
+      fresh.pendingQuestions = null;
+      fresh.diagrams[section.id] = { candidates: result.candidates, chosen: null };
     }
-    return ok(await store.save(project));
+    return ok(await store.save(fresh));
   });
 
   app.put('/projects/:id/sections/:sid/diagram', async (request) => {
@@ -79,9 +90,9 @@ export function registerAgentRoutes(app, { store, agent, locks, maxCallsPerMinut
     if (!spec) throw new AppError('bad_input');
     const instruction = String(request.body?.instruction ?? '').slice(0, 500);
     const result = await runAgent(locks, agent, project, 'refine', { document: project.document, section, answers: project.answers, diagram: spec, instruction });
-    const existing = project.diagrams[section.id] ?? {};
-    project.diagrams[section.id] = { ...existing, chosen: result.spec };
-    return ok(await store.save(project));
+    const fresh = await latest(store, project);
+    fresh.diagrams[section.id] = { ...(fresh.diagrams[section.id] ?? {}), chosen: result.spec };
+    return ok(await store.save(fresh));
   });
 
   app.post('/projects/:id/cancel', async (request) => ok({ cancelled: locks.cancel(request.params.id) }));
