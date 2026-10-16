@@ -1,5 +1,5 @@
 export const STATUS = {
-  bad_input: 400, url_blocked: 400, unauthorized: 401, not_found: 404, busy: 409, cancelled: 409,
+  bad_input: 400, url_blocked: 400, unauthorized: 401, forbidden: 403, not_found: 404, busy: 409, cancelled: 409,
   internal: 500, export_failed: 500, url_failed: 502, agent_bad_output: 502, agent_error: 502,
   agent_unavailable: 503, agent_timeout: 504,
 };
@@ -9,6 +9,7 @@ export const DEFAULT_MESSAGES = {
   url_blocked: 'Không được phép tải địa chỉ này.',
   url_failed: 'Không tải được trang web.',
   unauthorized: 'Cần mã truy cập hợp lệ.',
+  forbidden: 'Yêu cầu không được phép từ nguồn này.',
   not_found: 'Không tìm thấy.',
   busy: 'AI đang xử lý dự án này, vui lòng đợi.',
   cancelled: 'Đã huỷ yêu cầu.',

@@ -46,6 +46,46 @@ function authHook(config) {
   };
 }
 
+// Host names the server answers to. The Host header is what a browser cannot forge when it is
+// tricked into reaching the loopback API through DNS rebinding.
+function allowedHosts(config) {
+  const hosts = new Set([
+    `localhost:${config.port}`,
+    `127.0.0.1:${config.port}`,
+    `[::1]:${config.port}`,
+    `${config.host}:${config.port}`,
+  ]);
+  if (config.publicOrigin) {
+    try {
+      hosts.add(new URL(config.publicOrigin).host);
+    } catch {
+      /* a malformed public origin simply adds nothing */
+    }
+  }
+  return hosts;
+}
+
+function allowedOrigins(config) {
+  const origins = new Set([...allowedHosts(config)].map((host) => `http://${host}`));
+  if (config.publicOrigin) origins.add(config.publicOrigin);
+  return origins;
+}
+
+// Reject a foreign Host (DNS rebinding) and, for state-changing requests, a foreign Origin
+// (a cross-site POST needs no preflight, so the browser will happily send it).
+function originGuard(config) {
+  const hosts = allowedHosts(config);
+  const origins = allowedOrigins(config);
+  return async (request) => {
+    const host = request.headers.host;
+    if (typeof host !== 'string' || !hosts.has(host)) throw new AppError('forbidden');
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      const origin = request.headers.origin;
+      if (typeof origin === 'string' && origin !== '' && !origins.has(origin.replace(/\/+$/, ''))) throw new AppError('forbidden');
+    }
+  };
+}
+
 function errorHandler(error, request, reply) {
   if (error instanceof AppError) {
     if (error.detail) request.log.warn({ detail: error.detail }, error.message);
@@ -74,6 +114,7 @@ export async function buildApp(config, { agent, store, ingest = { ingestText, in
     reply.header('content-security-policy', `default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'${cspHash ? ` '${cspHash}'` : ''}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
   });
   app.setErrorHandler(errorHandler);
+  app.addHook('onRequest', originGuard(config));
 
   app.get('/vendor/opentype.mjs', async (request, reply) => {
     const dir = path.dirname(require.resolve('opentype.js/package.json'));

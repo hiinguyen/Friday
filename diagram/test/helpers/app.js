@@ -11,6 +11,9 @@ export async function makeTestApp({ env = {}, agent } = {}) {
   const config = loadConfig({ DIAGRAM_AGENT: 'fake', DIAGRAM_DATA_DIR: dataDir, ...env });
   const store = createStore(config.dataDir);
   const app = await buildApp(config, { agent: agent ?? createAgent(config), store });
+  const inject = app.inject.bind(app);
+  const defaultHost = `127.0.0.1:${config.port}`;
+  app.inject = (options = {}) => inject({ ...options, headers: { host: defaultHost, ...(options.headers ?? {}) } });
   return {
     app, store, config, dataDir,
     async close() {

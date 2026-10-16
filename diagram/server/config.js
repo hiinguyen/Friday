@@ -32,12 +32,14 @@ export function loadConfig(env) {
   }
   const dataDir = path.resolve(DIAGRAM_ROOT, '..', nonEmpty(env.DIAGRAM_DATA_DIR) ?? path.join('diagram', 'data'));
   const url = nonEmpty(env.DIAGRAM_HERMES_URL) ?? nonEmpty(env.FRIDAY_AGENT_URL);
+  const publicOrigin = nonEmpty(env.DIAGRAM_PUBLIC_ORIGIN);
   return {
     agent,
     host,
     port,
     token,
     dataDir,
+    publicOrigin: publicOrigin === null ? null : publicOrigin.replace(/\/+$/, ''),
     agentTimeoutMs: parsePositive(env.DIAGRAM_AGENT_TIMEOUT_S, DEFAULT_TIMEOUT_S, 'DIAGRAM_AGENT_TIMEOUT_S') * 1000,
     claudeModel: nonEmpty(env.DIAGRAM_CLAUDE_MODEL),
     hermes: {
