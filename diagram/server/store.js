@@ -52,28 +52,37 @@ export function createStore(dataDir, { maxProjects = 500 } = {}) {
     await fs.rename(temp, target);
   }
 
+  // Creates run one at a time, so parallel uploads cannot all pass the cap check together.
+  let creating = Promise.resolve();
+
+  async function createProject({ document, source = null }) {
+    if (await countProjects() >= maxProjects) {
+      throw new AppError('bad_input', `Đã đạt giới hạn ${maxProjects} dự án. Hãy xoá bớt dự án cũ.`);
+    }
+    const timestamp = nowIso();
+    const project = {
+      id: newId(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      document,
+      sourceFile: source ? `source.${source.ext}` : null,
+      answers: [],
+      pendingQuestions: null,
+      sections: [],
+      diagrams: {},
+    };
+    const dir = projectDir(project.id);
+    await fs.mkdir(dir, { recursive: true });
+    if (source) await fs.writeFile(path.join(dir, project.sourceFile), source.buffer);
+    await writeProject(project);
+    return project;
+  }
+
   return {
-    async create({ document, source = null }) {
-      if (await countProjects() >= maxProjects) {
-        throw new AppError('bad_input', `Đã đạt giới hạn ${maxProjects} dự án. Hãy xoá bớt dự án cũ.`);
-      }
-      const timestamp = nowIso();
-      const project = {
-        id: newId(),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        document,
-        sourceFile: source ? `source.${source.ext}` : null,
-        answers: [],
-        pendingQuestions: null,
-        sections: [],
-        diagrams: {},
-      };
-      const dir = projectDir(project.id);
-      await fs.mkdir(dir, { recursive: true });
-      if (source) await fs.writeFile(path.join(dir, project.sourceFile), source.buffer);
-      await writeProject(project);
-      return project;
+    create(input) {
+      const run = creating.then(() => createProject(input));
+      creating = run.catch(() => {});
+      return run;
     },
 
     async get(id) {

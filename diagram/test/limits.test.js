@@ -39,3 +39,22 @@ test('the store refuses to grow past its project cap', async () => {
   assert.match(json(full).error.message, /dự án/);
   await t.close();
 });
+
+test('behind a loopback proxy, failed attempts are counted per forwarded client', async () => {
+  const t = await makeTestApp({ env: { DIAGRAM_TOKEN: 'secret-123', DIAGRAM_AUTH_ATTEMPTS_PER_MINUTE: '2', DIAGRAM_PUBLIC_ORIGIN: 'https://d.example.com' } });
+  const headers = (client, token) => ({ host: 'd.example.com', 'x-forwarded-for': client, authorization: `Bearer ${token}` });
+  for (let i = 0; i < 3; i += 1) await t.app.inject({ url: '/api/projects', headers: headers('203.0.113.9', 'nope'), remoteAddress: '127.0.0.1' });
+  const attacker = await t.app.inject({ url: '/api/projects', headers: headers('203.0.113.9', 'nope'), remoteAddress: '127.0.0.1' });
+  assert.equal(attacker.statusCode, 429);
+  const user = await t.app.inject({ url: '/api/projects', headers: headers('198.51.100.7', 'secret-123'), remoteAddress: '127.0.0.1' });
+  assert.equal(user.statusCode, 200);
+  await t.close();
+});
+
+test('parallel creates never pass the project cap', async () => {
+  const t = await makeTestApp({ env: { DIAGRAM_MAX_PROJECTS: '3' } });
+  const results = await Promise.all(Array.from({ length: 8 }, (_, i) => t.app.inject({ method: 'POST', url: '/api/projects', payload: { text: `Đoạn ${i}.` } })));
+  assert.equal(results.filter((res) => res.statusCode === 200).length, 3);
+  assert.equal(json(await t.app.inject({ url: '/api/projects' })).data.length, 3);
+  await t.close();
+});

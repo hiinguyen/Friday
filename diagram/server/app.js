@@ -109,7 +109,9 @@ function errorHandler(error, request, reply) {
 }
 
 export async function buildApp(config, { agent, store, ingest = { ingestText, ingestFile, ingestUrl }, logger = false } = {}) {
-  const app = Fastify({ logger, bodyLimit: 2 * 1024 * 1024 });
+  // Behind a reverse proxy (DIAGRAM_PUBLIC_ORIGIN) every request comes from the proxy, so
+  // trust X-Forwarded-For from a loopback proxy; otherwise one client could lock out all.
+  const app = Fastify({ logger, bodyLimit: 2 * 1024 * 1024, trustProxy: config.publicOrigin ? 'loopback' : false });
   const locks = createLocks();
   const cspHash = importMapHash();
 

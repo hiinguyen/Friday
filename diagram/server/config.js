@@ -20,6 +20,20 @@ function parsePositive(value, fallback, name) {
   return number;
 }
 
+// An http(s) URL from the environment, or null when unset. Anything else stops the server at
+// startup instead of failing later on the first request.
+function parseHttpUrl(value, name) {
+  if (value === null) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an http or https URL, got "${value}"`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`${name} must be an http or https URL, got "${value}"`);
+  return url;
+}
+
 export function loadConfig(env) {
   const agent = nonEmpty(env.DIAGRAM_AGENT) ?? 'claude-code';
   if (!AGENTS.includes(agent)) throw new Error(`DIAGRAM_AGENT must be one of ${AGENTS.join(', ')}, got "${agent}"`);
@@ -33,28 +47,21 @@ export function loadConfig(env) {
   const dataDir = path.resolve(DIAGRAM_ROOT, '..', nonEmpty(env.DIAGRAM_DATA_DIR) ?? path.join('diagram', 'data'));
   const url = nonEmpty(env.DIAGRAM_HERMES_URL) ?? nonEmpty(env.FRIDAY_AGENT_URL);
   const key = nonEmpty(env.DIAGRAM_HERMES_KEY) ?? nonEmpty(env.FRIDAY_AGENT_KEY);
+  const parsedUrl = parseHttpUrl(url, 'DIAGRAM_HERMES_URL');
   const hermesUrl = url === null ? null : url.replace(/\/+$/, '');
   // A bearer key over plain http leaves the network: only loopback may be unencrypted.
-  if (hermesUrl !== null && key !== null) {
-    let parsedUrl = null;
-    try {
-      parsedUrl = new URL(hermesUrl);
-    } catch {
-      parsedUrl = null;
-    }
-    const hostname = parsedUrl ? parsedUrl.hostname.replace(/^\[|\]$/g, '') : null;
-    if (parsedUrl && parsedUrl.protocol === 'http:' && hostname !== null && !LOOPBACK.has(hostname)) {
-      throw new Error(`DIAGRAM_HERMES_URL (${hermesUrl}) must use https or a loopback host when DIAGRAM_HERMES_KEY is set`);
-    }
+  if (parsedUrl !== null && key !== null && parsedUrl.protocol === 'http:' && !LOOPBACK.has(parsedUrl.hostname.replace(/^\[|\]$/g, ''))) {
+    throw new Error(`DIAGRAM_HERMES_URL (${hermesUrl}) must use https or a loopback host when DIAGRAM_HERMES_KEY is set`);
   }
-  const publicOrigin = nonEmpty(env.DIAGRAM_PUBLIC_ORIGIN);
+  // Browsers send the Origin without a default port or path, so keep only that form.
+  const publicOrigin = parseHttpUrl(nonEmpty(env.DIAGRAM_PUBLIC_ORIGIN), 'DIAGRAM_PUBLIC_ORIGIN')?.origin ?? null;
   return {
     agent,
     host,
     port,
     token,
     dataDir,
-    publicOrigin: publicOrigin === null ? null : publicOrigin.replace(/\/+$/, ''),
+    publicOrigin,
     maxProjects: Math.floor(parsePositive(env.DIAGRAM_MAX_PROJECTS, 500, 'DIAGRAM_MAX_PROJECTS')),
     authAttemptsPerMinute: Math.floor(parsePositive(env.DIAGRAM_AUTH_ATTEMPTS_PER_MINUTE, 10, 'DIAGRAM_AUTH_ATTEMPTS_PER_MINUTE')),
     agentCallsPerMinute: Math.floor(parsePositive(env.DIAGRAM_AGENT_CALLS_PER_MINUTE, 20, 'DIAGRAM_AGENT_CALLS_PER_MINUTE')),

@@ -43,3 +43,10 @@ test('DIAGRAM_PUBLIC_ORIGIN is trusted for a reverse proxy', async () => {
   assert.equal(otherOrigin.statusCode, 403);
   await t.close();
 });
+
+test('a public origin written with its default port still matches the browser Origin', async () => {
+  const t = await makeTestApp({ env: { DIAGRAM_PUBLIC_ORIGIN: 'https://diagrams.example.com:443/' } });
+  const res = await t.app.inject({ method: 'POST', url: '/api/projects', payload: { text: 'Một đoạn.' }, headers: { host: 'diagrams.example.com', origin: 'https://diagrams.example.com' } });
+  assert.equal(res.statusCode, 200);
+  await t.close();
+});

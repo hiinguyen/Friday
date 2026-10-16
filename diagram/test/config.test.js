@@ -50,3 +50,11 @@ test('timeout and model are read from the environment', () => {
   assert.equal(config.agentTimeoutMs, 30000);
   assert.equal(config.claudeModel, 'sonnet');
 });
+
+test('a malformed Hermes URL or public origin fails at startup, and the origin is normalised', () => {
+  for (const url of ['evil.com', '//evil.com', 'ftp://h.example.com']) {
+    assert.throws(() => loadConfig({ DIAGRAM_HERMES_URL: url }), /DIAGRAM_HERMES_URL/, url);
+  }
+  assert.throws(() => loadConfig({ DIAGRAM_PUBLIC_ORIGIN: 'diagrams.example.com' }), /DIAGRAM_PUBLIC_ORIGIN/);
+  assert.equal(loadConfig({ DIAGRAM_PUBLIC_ORIGIN: 'https://D.example.com:443/' }).publicOrigin, 'https://d.example.com');
+});
