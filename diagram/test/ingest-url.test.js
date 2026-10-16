@@ -13,6 +13,16 @@ test('private, loopback, link-local and metadata addresses are blocked', () => {
   for (const ip of ['93.184.216.34', '8.8.8.8', '2606:4700::1111']) assert.equal(isBlockedAddress(ip), false, ip);
 });
 
+test('translation, 6to4, documentation, benchmark and reserved ranges are blocked', () => {
+  for (const ip of [
+    '64:ff9b::7f00:1', '64:ff9b::a9fe:a9fe', '64:ff9b:1::a9fe:a9fe', '2002:7f00:1::', '2002:a9fe:a9fe::',
+    '::127.0.0.1', '2001:db8::1', '192.0.2.1', '198.51.100.7', '203.0.113.9', '240.0.0.1', '255.255.255.255',
+  ]) {
+    assert.equal(isBlockedAddress(ip), true, ip);
+  }
+  assert.equal(isBlockedAddress('93.184.216.34'), false);
+});
+
 test('refuses other schemes, credentials and hosts that resolve to private addresses', async () => {
   await assert.rejects(guardedFetch('file:///etc/passwd'), { code: 'url_blocked' });
   await assert.rejects(guardedFetch('http://user:pw@example.com/'), { code: 'url_blocked' });

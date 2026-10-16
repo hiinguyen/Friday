@@ -8,9 +8,49 @@ for (const [address, prefix, type] of [
   ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'], ['127.0.0.0', 8, 'ipv4'],
   ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'], ['192.0.0.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
   ['198.18.0.0', 15, 'ipv4'], ['224.0.0.0', 3, 'ipv4'],
+  ['192.0.2.0', 24, 'ipv4'], ['198.51.100.0', 24, 'ipv4'], ['203.0.113.0', 24, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
+  ['255.255.255.255', 32, 'ipv4'],
   ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
+  ['::', 96, 'ipv6'], ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'], ['2002::', 16, 'ipv6'],
+  ['2001:db8::', 32, 'ipv6'],
 ]) {
   blocked.addSubnet(address, prefix, type);
+}
+
+// NAT64 (64:ff9b::/96 and 64:ff9b:1::/48), 6to4 (2002::/16) and IPv4-compatible (::/96)
+// carry an IPv4 address inside the IPv6 one; block it when that embedded address is blocked.
+function embeddedIPv4(ip) {
+  const [head, tail] = ip.split('::');
+  const parse = (text) => {
+    const groups = [];
+    if (text === '' || text === undefined) return groups;
+    for (const part of text.split(':')) {
+      if (part.includes('.')) {
+        const [a, b, c, d] = part.split('.').map(Number);
+        groups.push((a << 8) | b, (c << 8) | d);
+      } else {
+        groups.push(parseInt(part, 16) & 0xffff);
+      }
+    }
+    return groups;
+  };
+  let groups;
+  if (tail === undefined) {
+    groups = parse(head);
+  } else {
+    const left = parse(head);
+    const right = parse(tail);
+    if (left.length + right.length > 8) return null;
+    groups = [...left, ...new Array(8 - left.length - right.length).fill(0), ...right];
+  }
+  if (groups.length !== 8) return null;
+  const quad = (high, low) => `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+  if (groups[0] === 0x0064 && groups[1] === 0xff9b) return quad(groups[6], groups[7]);
+  if (groups[0] === 0x2002) return quad(groups[1], groups[2]);
+  if (groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0) {
+    return quad(groups[6], groups[7]);
+  }
+  return null;
 }
 
 export function isBlockedAddress(ip) {
@@ -18,7 +58,11 @@ export function isBlockedAddress(ip) {
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
   if (mapped) return blocked.check(mapped[1], 'ipv4');
   if (net.isIPv4(ip)) return blocked.check(ip, 'ipv4');
-  if (net.isIPv6(ip)) return blocked.check(ip, 'ipv6');
+  if (net.isIPv6(ip)) {
+    if (blocked.check(ip, 'ipv6')) return true;
+    const embedded = embeddedIPv4(ip);
+    return embedded === null ? false : blocked.check(embedded, 'ipv4');
+  }
   return true;
 }
 
