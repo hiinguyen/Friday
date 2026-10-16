@@ -60,6 +60,28 @@ export function textOfRuns(node, ns) {
 
 const DC = 'http://purl.org/dc/elements/1.1/';
 const BAD_OFFICE_FILE = 'Không đọc được tệp Office này.';
+const ZIP_TOO_LARGE = 'Tệp nén quá lớn để xử lý an toàn.';
+
+// JSZip decompresses lazily and has no size limit, so a tiny upload can expand to gigabytes.
+// The central directory already carries every uncompressed size; check it before reading anything.
+const ZIP_LIMITS = {
+  entries: 2000,
+  entryBytes: 25 * 1024 * 1024,
+  totalBytes: 100 * 1024 * 1024,
+};
+
+function checkZipSize(zip) {
+  const entries = Object.values(zip.files);
+  if (entries.length > ZIP_LIMITS.entries) throw new AppError('bad_input', ZIP_TOO_LARGE);
+  let total = 0;
+  for (const entry of entries) {
+    const size = entry._data ? entry._data.uncompressedSize : 0;
+    const bytes = typeof size === 'number' && Number.isFinite(size) ? size : 0;
+    if (bytes > ZIP_LIMITS.entryBytes) throw new AppError('bad_input', ZIP_TOO_LARGE);
+    total += bytes;
+    if (total > ZIP_LIMITS.totalBytes) throw new AppError('bad_input', ZIP_TOO_LARGE);
+  }
+}
 
 export function isZip(buffer) {
   return Boolean(buffer) && buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
@@ -67,11 +89,14 @@ export function isZip(buffer) {
 
 export async function openZip(buffer) {
   if (!isZip(buffer)) throw new AppError('bad_input', BAD_OFFICE_FILE);
+  let zip;
   try {
-    return await JSZip.loadAsync(buffer);
+    zip = await JSZip.loadAsync(buffer);
   } catch (error) {
     throw new AppError('bad_input', BAD_OFFICE_FILE, { detail: error.message });
   }
+  checkZipSize(zip);
+  return zip;
 }
 
 export async function coreTitle(zip) {
