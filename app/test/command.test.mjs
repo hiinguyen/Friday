@@ -260,6 +260,11 @@ test('the route Jev picked becomes one HUD log line', () => {
     value: 'SIMPLE 98%',
   });
   assert.deepEqual(routeLog({ id: 1, route: 'volume_up', confidence: 1 }).value, 'VOLUME UP 100%');
+  assert.deepEqual(routeLog({ id: 1, state: 'working', route: 'browse', confidence: 0.94 }), {
+    text: 'Jev route',
+    kind: 'ok',
+    value: 'BROWSE 94%',
+  });
   assert.deepEqual(routeLog({ id: 1, route: 'agent', confidence: 0.9, reason: 'follow-up' }), {
     text: 'Jev route',
     kind: 'ok',

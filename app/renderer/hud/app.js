@@ -268,7 +268,7 @@ function onAgent(event) {
   if (event.session === 'reset') panels.log('Conversation reset', 'ok');
   const route = routeLog(event);
   if (route) panels.log(clip(route.text), route.kind, route.value);
-  if (event.tool) panels.log(`Hermes: ${clip(event.tool)}`, 'info');
+  if (event.tool) panels.log(`${event.source ?? 'Hermes'}: ${clip(event.tool)}`, 'info');
   if (event.state === 'error') panels.log(`${event.source ?? 'Hermes'}: ${clip(event.error || 'failed')}`, 'err');
   // Progress keeps the HUD awake for as long as the agent works.
   hud.wakeAt = performance.now();

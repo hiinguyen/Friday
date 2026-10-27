@@ -10,7 +10,7 @@
 // out, so a late answer neither reaches the HUD nor speaks over the user.
 
 const { isResetCommand } = require('./conversation');
-const { LOCAL_ROUTES } = require('./local');
+const { LOCAL_ROUTES, isVietnamese } = require('./local');
 
 const NEW_CONVERSATION_REPLY = 'Starting a new conversation.';
 // How much of the agent's last reply Jev sees when judging a follow-up. Jev is
@@ -18,14 +18,29 @@ const NEW_CONVERSATION_REPLY = 'Starting a new conversation.';
 const PREVIOUS_REPLY_CHARS = 200;
 const AGENT_DISABLED = 'agent bridge disabled (set FRIDAY_AGENT_URL and FRIDAY_AGENT_KEY)';
 
+/** What she says when the browser agent stops: the page title, or why it could not finish. */
+function browseReply(text, result) {
+  const vietnamese = isVietnamese(text);
+  if (result.status === 'done') {
+    const title = String(result.title ?? '').trim();
+    if (vietnamese) return title ? `Xong. ${title}.` : 'Xong.';
+    return title ? `Done. ${title}.` : 'Done.';
+  }
+  const reason = result.reason ?? '';
+  return vietnamese
+    ? `Mình chưa làm xong trên trình duyệt: ${reason}.`
+    : `I couldn't finish that in the browser: ${reason}.`;
+}
+
 class CommandDispatcher {
   /**
    * router: {enabled, classify(text, previous)}; agent: {enabled, ask(id, text, session)};
-   * conversation: {warm, begin(), reset()}; speech: {say, end, cancel};
-   * runLocal(route, text); send(channel, payload) to the HUD; log and logError for the journal.
+   * browser: {enabled, run(text, {onStep}), cancel}; conversation: {warm, begin(), reset()};
+   * speech: {say, end, cancel}; runLocal(route, text); send(channel, payload) to the HUD;
+   * log and logError for the journal.
    */
-  constructor({ router, agent, conversation, speech, runLocal, send, log, logError }) {
-    Object.assign(this, { router, agent, conversation, speech, runLocal, send, log, logError });
+  constructor({ router, agent, browser, conversation, speech, runLocal, send, log, logError }) {
+    Object.assign(this, { router, agent, browser, conversation, speech, runLocal, send, log, logError });
     this.current = 0; // the command being answered; 0 once abandoned
     this.silenced = 0; // an abandoned command whose agent reply must stay silent
     this.agentCommand = null; // {id, text} the agent is answering
@@ -78,6 +93,7 @@ class CommandDispatcher {
     if (route === 'new_conversation') this.startNewConversation(id);
     else if (route === 'cancel') this.cancel(id);
     else if (route === 'simple') this.onSimple(id);
+    else if (route === 'browse' && this.browser?.enabled) await this.browse(id, text);
     else if (LOCAL_ROUTES.has(route)) await this.answerLocally(id, text, route);
     else this.askAgent(id, text);
   }
@@ -154,6 +170,28 @@ class CommandDispatcher {
     this.reply(id, answer);
   }
 
+  /** Run the goal in the user's Chrome; show each step, then speak the outcome. */
+  async browse(id, text) {
+    let result;
+    try {
+      result = await this.browser.run(text, {
+        onStep: (step) => {
+          if (!this.live(id)) return;
+          this.send('hud:agent', { id, state: 'working', tool: step.label, source: 'Browser' });
+        },
+      });
+    } catch (err) {
+      if (!this.live(id)) return;
+      this.logError(`command #${id}: browse failed: ${err.message}`);
+      this.send('hud:agent', { id, state: 'error', error: err.message, source: 'Browser' });
+      return;
+    }
+    if (!this.live(id) || !result) return; // dismissed, superseded, or cancelled mid-run
+    const credits = Number.isFinite(result.credits) ? `, ${result.credits} credits left` : '';
+    this.log(`command #${id}: browse ${result.status} (${result.actions} actions, ${result.decisions} decisions, ${result.ms} ms${credits})`);
+    this.reply(id, browseReply(text, result), { source: 'Browser' });
+  }
+
   logRoute(id, decision) {
     const percent = Math.round(decision.confidence * 100);
     const why = decision.reason ? `, ${decision.reason}` : '';
@@ -164,4 +202,4 @@ class CommandDispatcher {
   }
 }
 
-module.exports = { CommandDispatcher, NEW_CONVERSATION_REPLY, PREVIOUS_REPLY_CHARS };
+module.exports = { CommandDispatcher, NEW_CONVERSATION_REPLY, PREVIOUS_REPLY_CHARS, browseReply };
