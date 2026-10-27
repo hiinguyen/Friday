@@ -1,0 +1,14 @@
+<!doctype html>
+<title>Guard checks</title>
+<!-- Local fixture for app/test/browse-page.test.mjs. No network, no external assets. -->
+<style>
+  body { margin: 30px; }
+  button { width: 180px; height: 50px; }
+  #outside { position: absolute; top: 3000px; }
+</style>
+<p id="context">Cart total: $10</p>
+<button id="target" onclick="window.clicks=(window.clicks||0)+1">Continue</button>
+<label>City<input id="field" value="Zurich"></label>
+<label><input id="toggle" type="checkbox">Refundable</label>
+<select aria-label="Category"><option>All</option><option>Design</option></select>
+<p id="outside">Unrelated offscreen text</p>

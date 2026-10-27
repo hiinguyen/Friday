@@ -57,6 +57,12 @@ test('a confident local intent is routed to its local handler', () => {
   }
 });
 
+test('a confident browse intent is routed there, at the normal threshold', () => {
+  assert.deepEqual(decide({ intent: intent('browse'), complexity: complexity('complex') }, 0.5), { route: 'browse', confidence: 0.99 });
+  assert.equal(decide({ intent: intent('browse', 0.6) }, 0.5).route, 'browse');
+  assert.deepEqual(decide({ intent: intent('browse', 0.4) }, 0.5), { route: 'agent', confidence: 0.4, reason: 'unsure' });
+});
+
 test('ending or resetting a command needs more confidence than answering it', () => {
   for (const name of ['cancel', 'new_conversation']) {
     assert.deepEqual(decide({ intent: intent(name, 0.8) }, 0.5), { route: 'agent', confidence: 0.8, reason: 'unsure' }, name);

@@ -10,6 +10,7 @@
 //   time, volume_*, (un)mute,    handled on this machine (local.js)
 //   gesture_on, gesture_off
 //   simple                       a one-fact task; only labelled for now
+//   browse                       the browser agent (browse/agent.js) drives Chrome
 //   agent                        the remote Hermes agent, as before Jev
 //
 // Jev never drops a command: no answer, an error, a timeout or low confidence
@@ -29,8 +30,8 @@
 //
 // Each call costs one JevStation credit while it asks at most five questions.
 
-const DEFAULT_URL = 'https://jevstation.com/api/v1/systemone';
-const DEFAULT_MODEL = 'jev-1.13.0';
+const { askJev, jevConfig, jevDisabledReason, parseAnswers } = require('./jev');
+
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 const DEFAULT_TIMEOUT_S = 8;
 const FOLLOW_UP_MIN = 0.5;
@@ -38,11 +39,11 @@ const FOLLOW_UP_MIN = 0.5;
 // the user's request, so they need a surer answer than routes that only answer it.
 const DROPPING_ROUTES = new Set(['cancel', 'new_conversation']);
 const DROPPING_MIN_CONFIDENCE = 0.85;
-const ERROR_BODY_CHARS = 200;
 
 // Option keys are the routes; descriptions are what Jev judges against.
 const INTENTS = {
   agent: 'Anything else: a question, a task, or a request for the assistant',
+  browse: 'Do something on a website in the web browser: open a site, search on it, fill in a form or click through its pages',
   new_conversation: 'Start a new conversation with the assistant, or change the subject of the chat',
   cancel: 'Never mind: the user drops their own request or tells the assistant to be quiet (not a request to stop or cancel something else)',
   time: 'Asks the current time, day or date',
@@ -100,17 +101,6 @@ function buildRequest(text, previous, model) {
   return { model, state, questions };
 }
 
-/** Answers from either JevStation's {data: {...}} envelope or TypeSafe's bare body. */
-function parseAnswers(body) {
-  const payload = body?.data ?? body;
-  if (!payload?.answers || typeof payload.answers !== 'object') throw new Error('Jev returned no answers');
-  return {
-    answers: payload.answers,
-    model: typeof payload.model === 'string' ? payload.model : '',
-    credits: Number.isFinite(payload.credits?.remaining) ? payload.credits.remaining : null,
-  };
-}
-
 /** Where the command goes, from Jev's answers. Anything uncertain goes to the agent. */
 function decide(answers, minConfidence) {
   const intent = answers.intent;
@@ -130,36 +120,24 @@ function decide(answers, minConfidence) {
   return { route: ROUTES.agent, confidence: intentConfidence };
 }
 
-async function errorDetail(res) {
-  const text = await res.text().catch(() => '');
-  let detail = text;
-  try {
-    const body = JSON.parse(text);
-    detail = body.detail?.message ?? body.message ?? body.error?.message ?? text;
-  } catch {
-    // not JSON: keep the raw text
-  }
-  return String(detail).trim().slice(0, ERROR_BODY_CHARS) || res.statusText;
-}
-
 class JevRouter {
   constructor(options = {}) {
     const env = options.env ?? process.env;
-    this.key = options.key ?? env.JEV_API_KEY ?? '';
-    this.url = options.url ?? (env.FRIDAY_JEV_URL || DEFAULT_URL);
-    this.model = options.model ?? (env.FRIDAY_JEV_MODEL || DEFAULT_MODEL);
+    const config = jevConfig(env);
+    this.key = options.key ?? config.key;
+    this.url = options.url ?? config.url;
+    this.model = options.model ?? config.model;
     this.minConfidence = confidence(options.minConfidence ?? env.FRIDAY_JEV_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE);
-    this.timeoutMs = positive(options.timeoutSeconds ?? env.FRIDAY_JEV_TIMEOUT_S, DEFAULT_TIMEOUT_S) * 1000;
+    this.timeoutMs = options.timeoutSeconds === undefined
+      ? config.timeoutMs
+      : positive(options.timeoutSeconds, DEFAULT_TIMEOUT_S) * 1000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.controller = null;
   }
 
   /** Why the router is off ('' when on); then every command goes to the agent. */
   get disabledReason() {
-    if (!this.key) return 'set JEV_API_KEY';
-    // The bearer key goes wherever the URL points: never in the clear.
-    if (!this.url.startsWith('https://')) return `FRIDAY_JEV_URL must be https, got ${this.url}`;
-    return '';
+    return jevDisabledReason({ key: this.key, url: this.url });
   }
 
   get enabled() {
@@ -181,28 +159,21 @@ class JevRouter {
     const controller = new AbortController();
     this.controller = controller;
     const startedAt = Date.now();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, this.timeoutMs);
     try {
-      const res = await this.fetchImpl(this.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.key}` },
-        body: JSON.stringify(buildRequest(text, previous, this.model)),
+      const { answers, model, credits } = await askJev({
+        url: this.url,
+        key: this.key,
+        body: buildRequest(text, previous, this.model),
         signal: controller.signal,
+        timeoutMs: this.timeoutMs,
+        fetchImpl: this.fetchImpl,
       });
-      if (!res.ok) throw new Error(`Jev ${res.status}: ${await errorDetail(res)}`);
-      const { answers, model, credits } = parseAnswers(await res.json());
       const followUp = Number.isFinite(answers.follow_up?.noul) ? answers.follow_up.noul : null;
       return { ...decide(answers, this.minConfidence), model, credits, followUp, ms: Date.now() - startedAt };
     } catch (err) {
-      if (controller.signal.aborted && !timedOut) return null;
-      const error = timedOut ? 'Jev timed out' : err.message;
-      return { route: ROUTES.agent, confidence: 0, reason: 'error', error, ms: Date.now() - startedAt };
+      if (controller.signal.aborted && err.message !== 'Jev timed out') return null;
+      return { route: ROUTES.agent, confidence: 0, reason: 'error', error: err.message, ms: Date.now() - startedAt };
     } finally {
-      clearTimeout(timer);
       if (this.controller === controller) this.controller = null;
     }
   }

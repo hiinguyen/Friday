@@ -38,6 +38,7 @@ camera -> listener/hands.py (MediaPipe, offline, only in gesture mode) --JSON li
 - `app/src/gestures.js` runs gesture control: see [Gesture control](#gesture-control).
 - `app/src/agent.js` forwards the transcript of every command routed to the agent to a remote Hermes Agent API server, if one is configured, and streams the reply onto the HUD: see [Agent bridge](#agent-bridge).
   Nothing is installed locally and the bridge is inert until `FRIDAY_AGENT_URL` and `FRIDAY_AGENT_KEY` are set.
+- `app/src/browse/` carries out a command that asks for something on a website in the user's own Chrome, one step at a time: see [Browser agent](#browser-agent).
 - `listener/tts.py` reads the reply aloud in a cloned voice as it streams in: see [Spoken replies](#spoken-replies).
 - `app/src/main.js` keeps a hidden transparent window warm, so the HUD appears instantly.
   It supervises the listener and the voice and restarts them with backoff.
@@ -117,6 +118,15 @@ real environment wins over it, and `systemctl --user restart friday` applies a c
 | `FRIDAY_JEV_MODEL` | `jev-1.13.0` | Jev model, pinned so the threshold does not drift with an alias |
 | `FRIDAY_JEV_MIN_CONFIDENCE` | `0.5` | Below this confidence a command goes to the agent |
 | `FRIDAY_JEV_TIMEOUT_S` | `8` | Give up on Jev and send the command to the agent |
+| `FRIDAY_BROWSE` | on | `off` disables the browser agent; a browse command then goes to the agent |
+| `FRIDAY_BROWSE_START_URL` | `https://www.google.com/` | Where a browse run opens; must be `https://` |
+| `FRIDAY_BROWSE_TIMEOUT_S` | `120` | Stop a browse run after this many seconds |
+| `FRIDAY_BROWSE_CHROME_DIR` | `~/.config/google-chrome` | Chrome profile whose `DevToolsActivePort` is read |
+| `FRIDAY_BROWSE_CDP_URL` | unset | Loopback `ws://` CDP URL, when Chrome is reached another way |
+| `FRIDAY_BROWSE_TEXT_URL` | unset | OpenAI-compatible base URL for `TYPE_TEXT`; unset disables typing only |
+| `FRIDAY_BROWSE_TEXT_KEY` | unset | Bearer key for that endpoint |
+| `FRIDAY_BROWSE_TEXT_MODEL` | unset | Model id for `TYPE_TEXT` |
+| `FRIDAY_BROWSE_TEXT_EXTRA` | unset | JSON object merged into the text request body; cannot override the model |
 | `FRIDAY_TTS` | on | `off` keeps replies silent and frees the voice model's memory |
 | `FRIDAY_TTS_VOICE` | `models/tts-voice.safetensors` | Voice exported by `bin/friday voice`; without the file replies are silent |
 
@@ -183,6 +193,7 @@ Code, not a prompt, then picks the route, and `app/src/dispatch.js` carries it o
 | `time` | "mấy giờ rồi" | Answered locally, in the language of the command |
 | `volume_up`, `volume_down`, `mute`, `unmute` | "turn it down a bit" | `wpctl` on the default sink, 10% steps, never above 100% |
 | `simple` | "giá vàng hôm nay" | Only labelled (`SIMPLE TASK, NO HANDLER YET`); `onSimple` in `app/src/main.js` is where a quick answerer plugs in |
+| `browse` | "search Wikipedia for Gödel's incompleteness theorems" | The browser agent drives the user's own Chrome in a background tab: see [Browser agent](#browser-agent) |
 | `agent` | "list the newest files in Downloads" | Sent to Hermes, as before the router; a follow-up always stays with Hermes |
 
 Jev never drops a command.
@@ -232,6 +243,28 @@ Frames never leave the machine: MediaPipe runs on the CPU, and the debug picture
 The camera is read uncompressed (YUYV): a Logitech C270 sends MJPG that libjpeg warns about on every frame, at the same frame rate.
 In a dim room auto exposure caps the frame rate (15 fps on the C270, 10 on the integrated camera), and tracking is smoother with more light.
 MediaPipe imports `sounddevice`, whose PortAudio JACK backend gets the process killed on this setup; `hands.py` puts a stub in its place before loading MediaPipe.
+## Browser agent
+
+With `JEV_API_KEY` set and Chrome allowed once, a command such as "Friday, search Wikipedia for Gödel's incompleteness theorems" is routed to `browse` and carried out in the user's own Chrome, in a background tab the agent owns.
+`app/src/browse/` is a Node port of [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast) (MIT, Copyright (c) 2026 Browser Use).
+Each step reads the page once as an indexed table of visible controls, asks Jev for one operation and one target per operation in a single request, and executes only the chosen operation, so a `CLICK` can never consume a `TYPE_TEXT` target.
+A small OpenAI-compatible model writes text only for `TYPE_TEXT`.
+The HUD shows each step as `Browser: <label>`, and she says the page title when the goal is done.
+The tab is brought forward at the end and never closed, so the user can take over.
+
+Set it up once: open `chrome://inspect/#remote-debugging` in the Chrome you use and allow remote debugging, which makes Chrome write its port to `DevToolsActivePort` in its profile.
+Chrome then asks you to allow each new connection; Friday keeps ONE connection open for its whole life, so that prompt appears once per run of the service, not once per command.
+`FRIDAY_BROWSE_START_URL` is where every run opens, and `FRIDAY_BROWSE_CHROME_DIR` points at the profile to read.
+
+The agent never pays, buys, books, places an order, sends or posts a message, deletes anything, or changes account or security settings, and it never enters passwords, card numbers or other personal data the goal does not state: Jev must choose `BLOCKED` instead.
+Model output never becomes a selector, coordinate, URL, script or shell command: targets are indices into elements the page actually showed, and every click is rechecked against the live page immediately before it happens.
+A run is bounded to 60 actions, 120 decisions and `FRIDAY_BROWSE_TIMEOUT_S` seconds, and it stops early when three actions in a row change nothing.
+A browser mutation is never retried, and a cancelled run never touches the page again.
+JevStation charges one credit per decision, so one browser command can cost up to 120 credits.
+
+`TYPE_TEXT` needs a text model; a goal that never types needs none, and a `TYPE_TEXT` decision without one ends the run as blocked with the reason.
+Any OpenAI-compatible `/chat/completions` endpoint works: for example `FRIDAY_BROWSE_TEXT_URL=https://api.openai.com/v1` with `FRIDAY_BROWSE_TEXT_MODEL=gpt-4o-mini`, `https://api.deepseek.com/v1` with `deepseek-chat`, or `https://openrouter.ai/api/v1` with a model of your choice.
+`FRIDAY_BROWSE_TEXT_EXTRA` merges provider-specific knobs into the request body, such as `{"reasoning_effort":"low"}` or `{"thinking":{"type":"disabled"}}`, and cannot override the model, messages or response format.
 
 ## Spoken replies
 

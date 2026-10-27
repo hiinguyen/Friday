@@ -12,6 +12,7 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 require('./env').loadEnvFile();
 const { HermesAgent } = require('./agent');
 const { Badge } = require('./badge');
+const { BrowserAgent } = require('./browse/agent');
 const { Conversation } = require('./conversation');
 const { CommandDispatcher } = require('./dispatch');
 const { GestureDebug } = require('./gesture-debug');
@@ -62,6 +63,7 @@ const sampleStats = createSampler();
 const listener = new WakeListener();
 const agent = new HermesAgent();
 const router = new JevRouter();
+const browser = new BrowserAgent();
 const speech = new SpeechOutput();
 const badge = new Badge();
 const gestureDebug = new GestureDebug();
@@ -180,6 +182,7 @@ function onHudHidden(_event, seq) {
   // Dismissed (Esc, a click, or idle): the run is abandoned and she stops talking.
   dispatcher.abandon();
   router.cancel();
+  browser.cancel();
   agent.cancel();
   speech.cancel();
   markHidden();
@@ -214,6 +217,7 @@ app.whenReady().then(() => {
     log(`wake word detected (conf=${conf})`);
     dispatcher.abandon(); // a new command abandons whatever the last one was still doing
     router.cancel();
+    browser.cancel();
     agent.cancel();
     speech.cancel(); // and she stops talking to listen
     showHud(conf);
@@ -308,6 +312,7 @@ app.whenReady().then(() => {
   dispatcher = new CommandDispatcher({
     router,
     agent,
+    browser,
     conversation,
     speech,
     runLocal: (route, text) => runLocal(route, text, { gestures }),
@@ -328,6 +333,11 @@ app.whenReady().then(() => {
   } else {
     log(`jev router: disabled (${router.disabledReason}), every command goes to the agent`);
   }
+  if (browser.enabled) {
+    log(`browser agent: ${browser.startUrl}, timeout ${browser.timeoutMs / 1000}s`);
+  } else {
+    log(`browser agent: disabled (${browser.disabledReason})`);
+  }
 
   if (initialCommand === 'wake' || initialCommand === 'toggle') pendingWake = 1;
   createWindow();
@@ -345,6 +355,7 @@ app.on('before-quit', () => {
   gestures.disable('quit');
   listener.stop();
   router.cancel();
+  browser.cancel();
   agent.close();
   speech.stop();
 });
