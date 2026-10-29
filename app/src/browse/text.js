@@ -7,8 +7,9 @@
 // Ported from `field_context` and `field_text` in REF/jev_ultrafast/model.py
 // (MIT, Copyright (c) 2026 Browser Use).
 //
-//   FRIDAY_BROWSE_TEXT_URL      base URL, no default (e.g. https://api.openai.com/v1)
-//   FRIDAY_BROWSE_TEXT_KEY      bearer key for that endpoint
+//   FRIDAY_BROWSE_TEXT_URL      base URL, no default (e.g. https://api.openai.com/v1,
+//                               or http://127.0.0.1:8080/v1 for a model on this machine)
+//   FRIDAY_BROWSE_TEXT_KEY      bearer key for that endpoint (optional on this machine)
 //   FRIDAY_BROWSE_TEXT_MODEL    model id
 //   FRIDAY_BROWSE_TEXT_EXTRA    optional JSON object merged into the body (never
 //                               model/messages/response_format)
@@ -28,6 +29,9 @@ const RETRY_STATUS = new Set([429, 503, 529]);
 const RETRY_DELAYS = [500, 1000];
 const PROTECTED_KEYS = ['model', 'messages', 'response_format'];
 const INVALID_VALUE = 'Text helper returned no valid field value; nothing typed.';
+// Plain http is only for a server on this machine (llama-server, Ollama): the
+// page text and the key never cross the network unencrypted.
+const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
 
 /** TYPE_TEXT needs a text model; the loop ends the run with this reason. */
 class TextConfigError extends Error {
@@ -77,10 +81,13 @@ function textConfig(env = process.env) {
 
 /** Why TYPE_TEXT cannot run ('' when it can). */
 function textDisabledReason(config) {
-  if (!config?.url || !config?.key || !config?.model) {
+  const local = LOOPBACK.test(config?.url ?? '');
+  if (config?.url && !local && !config.url.startsWith('https://')) {
+    return 'FRIDAY_BROWSE_TEXT_URL must be https, or http on this machine';
+  }
+  if (!config?.url || (!config.key && !local) || !config.model) {
     return 'set FRIDAY_BROWSE_TEXT_URL, FRIDAY_BROWSE_TEXT_KEY and FRIDAY_BROWSE_TEXT_MODEL';
   }
-  if (!config.url.startsWith('https://')) return 'FRIDAY_BROWSE_TEXT_URL must be https';
   return '';
 }
 
@@ -126,9 +133,11 @@ async function postOnce(config, body, { fetchImpl, signal, timeoutMs }) {
   signal?.addEventListener('abort', onAbort, { once: true });
   if (signal?.aborted) controller.abort();
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (config.key) headers.Authorization = `Bearer ${config.key}`;
     return await fetchImpl(`${config.url}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.key}` },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });

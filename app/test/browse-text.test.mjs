@@ -40,10 +40,31 @@ test('textConfig ignores an extra that is not a JSON object', () => {
   }
 });
 
-test('textDisabledReason names what is missing, or an insecure URL', () => {
+test('textDisabledReason names what is missing, or an insecure remote URL', () => {
   assert.equal(textDisabledReason(config({ key: '' })), 'set FRIDAY_BROWSE_TEXT_URL, FRIDAY_BROWSE_TEXT_KEY and FRIDAY_BROWSE_TEXT_MODEL');
-  assert.equal(textDisabledReason(config({ url: 'http://api.example/v1' })), 'FRIDAY_BROWSE_TEXT_URL must be https');
+  assert.equal(textDisabledReason(config({ url: 'http://api.example/v1' })), 'FRIDAY_BROWSE_TEXT_URL must be https, or http on this machine');
   assert.equal(textDisabledReason(config()), '');
+});
+
+test('a model on this machine may use plain http and needs no key', () => {
+  for (const url of ['http://127.0.0.1:8080/v1', 'http://localhost:8080/v1', 'http://[::1]:8080/v1']) {
+    assert.equal(textDisabledReason(config({ url, key: '' })), '', url);
+  }
+  assert.equal(textDisabledReason(config({ url: 'http://127.0.0.1.evil.example/v1', key: '' })), 'FRIDAY_BROWSE_TEXT_URL must be https, or http on this machine');
+  assert.equal(textDisabledReason(config({ url: 'http://192.168.1.5:8080/v1' })), 'FRIDAY_BROWSE_TEXT_URL must be https, or http on this machine');
+  assert.equal(textDisabledReason(config({ model: '' })), 'set FRIDAY_BROWSE_TEXT_URL, FRIDAY_BROWSE_TEXT_KEY and FRIDAY_BROWSE_TEXT_MODEL');
+});
+
+test('a local model without a key is called without an Authorization header', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return chatReply('{"text":"London"}');
+  };
+  const result = await fieldText({}, { config: config({ url: 'http://127.0.0.1:8080/v1', key: '' }), fetchImpl });
+  assert.equal(result.text, 'London');
+  assert.equal(calls[0].url, 'http://127.0.0.1:8080/v1/chat/completions');
+  assert.equal(calls[0].init.headers.Authorization, undefined);
 });
 
 test('fieldContext caps the page text and keeps the last six actions', () => {
