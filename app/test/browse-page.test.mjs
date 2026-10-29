@@ -85,6 +85,39 @@ test('observe retries after a snapshot that is not ready', async () => {
   assert.equal(observed.fingerprint, fingerprint(expected));
 });
 
+/** A CDP stub whose page read is not ready (no body yet) until `readyAfterMs`. */
+function slowBodyCdp(readyAfterMs, expected) {
+  const startedAt = Date.now();
+  return fakeCdp((method, params) => {
+    if (method === 'Runtime.evaluate' && params.expression === READ_STATE) {
+      return { result: { value: Date.now() - startedAt < readyAfterMs ? null : expected } };
+    }
+    return {};
+  });
+}
+
+test('observe waits for a body that arrives after many unready reads', async () => {
+  const expected = state();
+  const observed = await new Page(slowBodyCdp(600, expected), 't1', 's1').observe();
+  assert.equal(observed, expected);
+});
+
+test('observe gives up once the settle deadline passes', async () => {
+  const page = new Page(slowBodyCdp(Infinity, state()), 't1', 's1');
+  page.settleMs = 150;
+  const startedAt = Date.now();
+  await assert.rejects(page.observe(), (err) => err instanceof StalePage && err.message === 'Page did not settle');
+  assert.ok(Date.now() - startedAt >= 150, 'waited out the deadline');
+});
+
+test('observe stops waiting as soon as the run is cancelled', async () => {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 50);
+  const startedAt = Date.now();
+  await assert.rejects(new Page(slowBodyCdp(Infinity, state()), 't1', 's1').observe({ signal: controller.signal }), StalePage);
+  assert.ok(Date.now() - startedAt < 1000, 'did not sit out the settle deadline');
+});
+
 test('act refuses a stale page before any Input call', async () => {
   const cdp = fakeCdp((method) => {
     if (method === 'Runtime.evaluate') return { result: { value: [['other'], ['g']] } };

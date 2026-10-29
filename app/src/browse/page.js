@@ -19,7 +19,6 @@ const VIEW_WIDTH = 1120;
 const VIEW_HEIGHT = 780;
 const NAV_TIMEOUT_MS = 15000;
 const POLL_MS = 20;
-const OBSERVE_ATTEMPTS = 10;
 const WAIT_MS = 100;
 const SCROLL_X = 550;
 const SCROLL_Y = 650;
@@ -104,6 +103,7 @@ class Page {
     this.targetId = targetId;
     this.sessionId = sessionId;
     this.afterInput = null;
+    this.settleMs = NAV_TIMEOUT_MS;
   }
 
   /** Create the background tab, size it and load `url`; waits for the document to be complete. */
@@ -139,7 +139,7 @@ class Page {
   }
 
   /** One atomic read of the page: url, title, visible text, indexed actions, guards and marker. */
-  async observe() {
+  async observe({ signal } = {}) {
     if (this.afterInput) {
       const action = this.afterInput;
       this.afterInput = null;
@@ -150,15 +150,18 @@ class Page {
         // A navigation during the wait is not an error: the next read finds the new page.
       }
     }
-    for (let attempt = 0; attempt < OBSERVE_ATTEMPTS; attempt += 1) {
+    // A committed document can lack a body for seconds (a heavy head on a cold
+    // cache): keep reading until it settles, the deadline passes, or the run ends.
+    const deadline = Date.now() + this.settleMs;
+    for (;;) {
       try {
         return await this.snapshot();
       } catch (err) {
-        if (!(err instanceof StalePage) || attempt === OBSERVE_ATTEMPTS - 1) throw err;
+        if (!(err instanceof StalePage) || signal?.aborted) throw err;
       }
+      if (Date.now() >= deadline) throw new StalePage('Page did not settle');
       await sleep(POLL_MS);
     }
-    throw new StalePage('Page did not settle');
   }
 
   async snapshot() {
