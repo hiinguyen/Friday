@@ -166,20 +166,16 @@ test('waits do not trigger the no-progress stop, but three unchanged actions do'
   assert.equal(clicking.page.calls.act.length, 3);
 });
 
-test('a stale observation after an action keeps the executed action in history', async () => {
-  let actCalls = 0;
+test('a page that never settles after an action still keeps the action in history', async () => {
   const { agent, page } = makeAgent({
     script: {
-      observe: (index) => (index === 1 ? new StalePage('navigation') : baseState([CLICK, WAIT])),
-      act: () => {
-        actCalls += 1;
-      },
+      observe: (index) => (index === 1 ? new StalePage('Page did not settle') : baseState([CLICK, WAIT])),
     },
     decides: seq([click(), done()]),
   });
   const steps = [];
   const result = await agent.run('click it', { onStep: (step) => steps.push(step) });
-  assert.equal(result.status, 'done');
+  assert.deepEqual([result.status, result.reason], ['blocked', 'Page did not settle']);
   assert.equal(result.actions, 1, 'the executed action stayed in history');
   assert.equal(steps.length, 1, 'onStep reported it exactly once');
   assert.equal(page.calls.act.length, 1);

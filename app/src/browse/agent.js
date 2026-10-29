@@ -28,8 +28,6 @@ const { fieldContext, fieldText, textConfig } = require('./text');
 
 const DEFAULT_START_URL = 'https://www.google.com/';
 const DEFAULT_TIMEOUT_S = 120;
-// The page read retries internally; this is how many times the loop retries it.
-const OBSERVE_ATTEMPTS = 10;
 
 /**
  * `promise`'s value, or null as soon as `signal` aborts. A value that arrives
@@ -141,17 +139,8 @@ class BrowserAgent {
     let credits = null;
     let cachedText = null;
 
-    // A page that keeps changing is re-read; only a run that cannot read at all throws.
-    const observeSettled = async () => {
-      for (let attempt = 0; attempt < OBSERVE_ATTEMPTS; attempt += 1) {
-        try {
-          return await page.observe();
-        } catch (err) {
-          if (!(err instanceof StalePage) || signal.aborted) throw err;
-        }
-      }
-      throw new StalePage('Page did not settle');
-    };
+    // The page waits for a changing document to settle; only one that never does throws.
+    const observeSettled = () => page.observe({ signal });
 
     // A check that lands on a navigating document is just a stale page: read it again.
     const isFresh = async () => {
