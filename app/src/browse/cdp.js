@@ -21,6 +21,9 @@ const { EventEmitter } = require('node:events');
 
 const DEFAULT_CHROME_DIR = path.join(os.homedir(), '.config', 'google-chrome');
 const DEFAULT_CALL_TIMEOUT_MS = 15000;
+// Chrome holds the handshake until the user answers its "Allow remote debugging?"
+// prompt, which the HUD may cover: give them time, but never wait forever.
+const DEFAULT_OPEN_TIMEOUT_MS = 30000;
 const PORT_FILE = 'DevToolsActivePort';
 const BROWSER_PREFIX = '/devtools/browser/';
 // CDP is full control of the browser, so only a URL on this machine is allowed.
@@ -51,11 +54,12 @@ function readDevToolsUrl({ chromeDir, readFile = fs.readFileSync }) {
 
 /** One CDP WebSocket: numbered calls, events, and a bounded wait per call. */
 class CdpConnection extends EventEmitter {
-  constructor({ url, WebSocketImpl = WebSocket, callTimeoutMs = DEFAULT_CALL_TIMEOUT_MS }) {
+  constructor({ url, WebSocketImpl = WebSocket, callTimeoutMs = DEFAULT_CALL_TIMEOUT_MS, openTimeoutMs = DEFAULT_OPEN_TIMEOUT_MS }) {
     super();
     this.url = url;
     this.WebSocketImpl = WebSocketImpl;
     this.callTimeoutMs = callTimeoutMs;
+    this.openTimeoutMs = openTimeoutMs;
     this.socket = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -70,10 +74,22 @@ class CdpConnection extends EventEmitter {
   async open() {
     const socket = new this.WebSocketImpl(this.url);
     this.socket = socket;
-    await new Promise((resolve, reject) => {
-      socket.addEventListener('open', () => resolve(), { once: true });
-      socket.addEventListener('error', () => reject(new Error('Chrome connection failed')), { once: true });
-    });
+    let timer;
+    try {
+      await new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          const seconds = Math.round(this.openTimeoutMs / 1000);
+          reject(new Error(`Chrome did not accept the connection within ${seconds} s: click Allow in Chrome's remote debugging prompt`));
+        }, this.openTimeoutMs);
+        socket.addEventListener('open', () => resolve(), { once: true });
+        socket.addEventListener('error', () => reject(new Error('Chrome connection failed')), { once: true });
+      });
+    } catch (err) {
+      socket.close();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     this.opened = true;
     socket.addEventListener('message', (event) => this.onMessage(event.data));
     socket.addEventListener('close', () => this.onClose());

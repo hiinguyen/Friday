@@ -298,3 +298,57 @@ test('disabledReason names the first reason the browser agent cannot run', () =>
   assert.equal(on.timeoutMs, 120000);
   assert.equal(new BrowserAgent({ env: { FRIDAY_BROWSE_TIMEOUT_S: '30' } }).timeoutMs, 30000);
 });
+
+test('a freshness check that hits a navigating page re-observes instead of failing the run', async () => {
+  let checks = 0;
+  const { agent, page } = makeAgent({ script: { state: baseState() }, decides: seq([done]) });
+  page.fresh = async () => {
+    checks += 1;
+    if (checks === 1) throw new StalePage('Document changed during evaluation');
+    return true;
+  };
+  const result = await agent.run('find it');
+  assert.equal(result.status, 'done');
+  assert.equal(page.calls.observe, 2, 'the stale check led to a new observation');
+});
+
+test('cancel while Chrome is still connecting resolves null without opening a tab', async () => {
+  let opened = 0;
+  const agent = new BrowserAgent({
+    env: { JEV_API_KEY: 'sk_test' },
+    chrome: { connection: () => new Promise(() => {}) }, // the Allow prompt is never answered
+    openPage: async () => {
+      opened += 1;
+    },
+  });
+  const run = agent.run('find it');
+  await flush();
+  agent.cancel();
+  assert.equal(await run, null);
+  assert.equal(opened, 0);
+});
+
+test('a tab that finishes opening after cancel is closed and never acted on', async () => {
+  let finishOpen;
+  const page = fakePage({ state: baseState() });
+  page.close = async () => {
+    page.calls.closed = true;
+  };
+  const agent = new BrowserAgent({
+    env: { JEV_API_KEY: 'sk_test' },
+    chrome: { connection: async () => ({}) },
+    openPage: () => new Promise((resolve) => {
+      finishOpen = () => resolve(page);
+    }),
+    decideImpl: seq([click]),
+  });
+  const run = agent.run('find it');
+  await flush();
+  agent.cancel();
+  assert.equal(await run, null);
+  finishOpen();
+  await flush();
+  assert.equal(page.calls.closed, true);
+  assert.equal(page.calls.observe, 0);
+  assert.equal(page.calls.act.length, 0);
+});
