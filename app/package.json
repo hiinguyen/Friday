@@ -6,7 +6,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron . --ozone-platform=wayland --enable-features=WaylandWindowDecorations",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js test/*.test.mjs"
   },
   "devDependencies": {
     "electron": "^44.7.0"
