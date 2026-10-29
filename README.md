@@ -308,6 +308,12 @@ Calibration on 13 held-out LibriSpeech speakers, all passed through one simulate
 Very short commands, colds, whispering or a noisy room lower your own score; recordings of your voice are accepted.
 This keeps other people in the room from commanding Friday; it is not protection against a deliberate impostor.
 
+## Diagram Studio
+
+`diagram/` holds a separate web app that turns text, Markdown, Word, PowerPoint or a web page into editable diagrams, in the spirit of Napkin AI.
+It runs with the local Claude Code CLI on a laptop, or with a Hermes API server on a server, and shares the `FRIDAY_AGENT_*` settings as a fallback.
+See [diagram/README.md](diagram/README.md) for how to run, configure and test it.
+
 ## Test
 
 ```sh

@@ -1,6 +1,7 @@
 .venv/
 models/
 app/node_modules/
+diagram/node_modules/
 __pycache__/
 .pytest_cache/
 .env

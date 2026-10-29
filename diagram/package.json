@@ -1,0 +1,40 @@
+{
+  "name": "diagram-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "e2e": "playwright test -c e2e/playwright.config.js",
+    "golden:update": "node scripts/golden.js",
+    "icons:build": "node scripts/build-icons.js"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
+    "@fastify/multipart": "^10.1.4",
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/static": "^10.1.6",
+    "@mozilla/readability": "^0.6.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "@xmldom/xmldom": "^0.9.12",
+    "ajv": "^8.20.0",
+    "fastify": "^5.12.7",
+    "jszip": "^3.10.2",
+    "linkedom": "^0.18.13",
+    "marked": "^18.1.1",
+    "opentype.js": "^2.0.0",
+    "pdfkit": "^0.20.2",
+    "svg-to-pdfkit": "^0.1.8",
+    "undici": "^8.12.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "docx": "^9.11.0",
+    "lucide-static": "^1.57.0",
+    "pptxgenjs": "^4.0.1"
+  }
+}
