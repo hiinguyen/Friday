@@ -1,9 +1,15 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
 const { SpeechOutput } = require('../src/speech');
+
+// The real voice worker runs in the listener's Python, which a checkout without
+// the venv (CI's hud job) does not have.
+const PYTHON = process.env.FRIDAY_PYTHON || path.join(__dirname, '..', '..', '.venv', 'bin', 'python');
+const pythonMissing = !fs.existsSync(PYTHON);
 
 function collect(speech) {
   const events = [];
@@ -66,14 +72,18 @@ test('sends say, end and cancel as JSON lines', () => {
   );
 });
 
-test('without a cloned voice the worker reports disabled once and is not restarted', async (t) => {
+test('without a cloned voice the worker reports disabled once and is not restarted', { skip: pythonMissing && 'listener venv not installed' }, async (t) => {
   t.mock.method(console, 'error', () => {});
   const original = process.env.FRIDAY_TTS_VOICE;
   process.env.FRIDAY_TTS_VOICE = path.join(__dirname, 'no-such-voice.safetensors');
   const speech = new SpeechOutput({ backoffMs: [5] });
   const events = collect(speech);
   try {
-    const disabled = new Promise((resolve) => speech.once('disabled', resolve));
+    // A worker that cannot start reports an error: fail on it instead of waiting forever.
+    const disabled = new Promise((resolve, reject) => {
+      speech.once('disabled', resolve);
+      speech.once('error', (reason) => reject(new Error(reason)));
+    });
     speech.start();
     assert.match(await disabled, /bin\/friday voice/);
     await new Promise((resolve) => setTimeout(resolve, 500));
