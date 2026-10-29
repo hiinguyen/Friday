@@ -31,6 +31,35 @@ const DEFAULT_TIMEOUT_S = 120;
 // The page read retries internally; this is how many times the loop retries it.
 const OBSERVE_ATTEMPTS = 10;
 
+/**
+ * `promise`'s value, or null as soon as `signal` aborts. A value that arrives
+ * after the abort goes to `onLate` (to release it) and is otherwise dropped.
+ */
+function untilAborted(promise, signal, onLate = () => {}) {
+  if (signal.aborted) {
+    promise.then(onLate, () => {});
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      promise.then(onLate, () => {});
+      resolve(null);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) return;
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        if (!signal.aborted) reject(err);
+      },
+    );
+  });
+}
+
 function positive(value, fallback) {
   const number = Number.parseFloat(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
@@ -102,8 +131,11 @@ class BrowserAgent {
     this.controller = controller;
     const { signal } = controller;
     const startedAt = this.now();
-    const cdp = await this.chrome.connection();
-    const page = await this.openPage(cdp, this.startUrl);
+    // Connecting can wait on Chrome's Allow prompt: a cancel must not wait with it.
+    const cdp = await untilAborted(this.chrome.connection(), signal);
+    if (!cdp) return null;
+    const page = await untilAborted(this.openPage(cdp, this.startUrl), signal, (late) => late.close());
+    if (!page) return null;
     const history = [];
     let decisions = 0;
     let credits = null;
@@ -119,6 +151,16 @@ class BrowserAgent {
         }
       }
       throw new StalePage('Page did not settle');
+    };
+
+    // A check that lands on a navigating document is just a stale page: read it again.
+    const isFresh = async () => {
+      try {
+        return await page.fresh(state);
+      } catch (err) {
+        if (err instanceof StalePage) return false;
+        throw err;
+      }
     };
 
     let state = await observeSettled();
@@ -137,7 +179,7 @@ class BrowserAgent {
       if (decisions >= MAX_DECISIONS) return finish('blocked', 'decision budget');
       if (history.length >= MAX_ACTIONS) return finish('blocked', 'action budget');
 
-      if (!(await page.fresh(state))) {
+      if (!(await isFresh())) {
         state = await observeSettled();
         continue;
       }
@@ -154,7 +196,7 @@ class BrowserAgent {
       if (decision.credits != null) credits = decision.credits;
 
       if (decision.choice === 'DONE' || decision.choice === 'BLOCKED') {
-        if (!(await page.fresh(state))) {
+        if (!(await isFresh())) {
           state = await observeSettled();
           continue;
         }
@@ -167,7 +209,7 @@ class BrowserAgent {
 
       let text = null;
       if (action.kind === 'fill') {
-        if (!(await page.fresh(state))) {
+        if (!(await isFresh())) {
           state = await observeSettled();
           continue;
         }

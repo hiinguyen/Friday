@@ -169,3 +169,14 @@ test('a server error fails at once without echoing the body', async () => {
   });
   assert.equal(calls, 1);
 });
+
+test('cancelling during a retry wait stops at once instead of after the delay', async () => {
+  const controller = new AbortController();
+  const fetchImpl = async () => {
+    setTimeout(() => controller.abort(), 10);
+    return jsonResponse({}, 429);
+  };
+  const startedAt = Date.now();
+  await assert.rejects(fieldText({}, { config: config(), fetchImpl, signal: controller.signal }), /aborted/);
+  assert.ok(Date.now() - startedAt < 300, 'did not sit out the 500 ms retry delay');
+});

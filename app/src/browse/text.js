@@ -37,7 +37,16 @@ class TextConfigError extends Error {
   }
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Wait `ms`, or less when `signal` aborts first. */
+function sleep(ms, signal) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
 
 /** The endpoint, key, model and provider-specific extras, from the environment. */
 function textConfig(env = process.env) {
@@ -137,7 +146,7 @@ async function postChat(config, body, options) {
   for (let attempt = 0; ; attempt += 1) {
     const res = await postOnce(config, body, options);
     if (RETRY_STATUS.has(res.status) && attempt < RETRY_DELAYS.length) {
-      await sleep(RETRY_DELAYS[attempt]);
+      await sleep(RETRY_DELAYS[attempt], options.signal);
       if (options.signal?.aborted) throw new Error('Text model aborted');
       continue;
     }

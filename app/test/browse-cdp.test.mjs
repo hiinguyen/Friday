@@ -168,3 +168,14 @@ test('Chrome refuses a non-loopback CDP URL: it is full control of the browser',
   await assert.rejects(chrome.connection(), /loopback/);
   assert.equal(FakeSocket.instances.length, 0);
 });
+
+test('a connection Chrome never accepts fails after openTimeoutMs, with how to allow it', async () => {
+  // Chrome holds the handshake while its "Allow remote debugging?" prompt waits for the user.
+  class SilentSocket extends FakeSocket {
+    open() {}
+  }
+  const conn = new CdpConnection({ url: 'ws://127.0.0.1:9222/devtools/browser/abc', WebSocketImpl: SilentSocket, openTimeoutMs: 20 });
+  await assert.rejects(conn.open(), /did not accept the connection.*Allow/);
+  assert.equal(FakeSocket.instances.at(-1).closed, true, 'the pending socket is closed');
+  assert.equal(conn.isOpen, false);
+});
