@@ -123,8 +123,8 @@ real environment wins over it, and `systemctl --user restart friday` applies a c
 | `FRIDAY_BROWSE_TIMEOUT_S` | `120` | Stop a browse run after this many seconds |
 | `FRIDAY_BROWSE_CHROME_DIR` | `~/.config/google-chrome` | Chrome profile whose `DevToolsActivePort` is read |
 | `FRIDAY_BROWSE_CDP_URL` | unset | Loopback `ws://` CDP URL, when Chrome is reached another way |
-| `FRIDAY_BROWSE_TEXT_URL` | unset | OpenAI-compatible base URL for `TYPE_TEXT`; unset disables typing only |
-| `FRIDAY_BROWSE_TEXT_KEY` | unset | Bearer key for that endpoint |
+| `FRIDAY_BROWSE_TEXT_URL` | unset | OpenAI-compatible base URL for `TYPE_TEXT`: https, or http on this machine; unset disables typing only |
+| `FRIDAY_BROWSE_TEXT_KEY` | unset | Bearer key for that endpoint; optional for a server on this machine |
 | `FRIDAY_BROWSE_TEXT_MODEL` | unset | Model id for `TYPE_TEXT` |
 | `FRIDAY_BROWSE_TEXT_EXTRA` | unset | JSON object merged into the text request body; cannot override the model |
 | `FRIDAY_TTS` | on | `off` keeps replies silent and frees the voice model's memory |
@@ -264,6 +264,8 @@ JevStation charges one credit per decision, so one browser command can cost up t
 
 `TYPE_TEXT` needs a text model; a goal that never types needs none, and a `TYPE_TEXT` decision without one ends the run as blocked with the reason.
 Any OpenAI-compatible `/chat/completions` endpoint works: for example `FRIDAY_BROWSE_TEXT_URL=https://api.openai.com/v1` with `FRIDAY_BROWSE_TEXT_MODEL=gpt-4o-mini`, `https://api.deepseek.com/v1` with `deepseek-chat`, or `https://openrouter.ai/api/v1` with a model of your choice.
+A model on this machine works too: run an OpenAI-compatible server such as `llama-server` and point `FRIDAY_BROWSE_TEXT_URL` at it, for example `http://127.0.0.1:8080/v1`.
+Plain http is accepted only for `127.0.0.1`, `localhost` and `[::1]`, and such a server needs no key.
 `FRIDAY_BROWSE_TEXT_EXTRA` merges provider-specific knobs into the request body, such as `{"reasoning_effort":"low"}` or `{"thinking":{"type":"disabled"}}`, and cannot override the model, messages or response format.
 
 ## Spoken replies
